@@ -1,0 +1,18 @@
+[submodule "corpus"]
+	path = corpus
+	url = https://github.com/slavonic/cu-md-sandbox.git
+[submodule "fonts/Ponomar"]
+	path = fonts/Ponomar
+	url = https://github.com/slavonic/Ponomar.git
+[submodule "fonts/Triodion"]
+	path = fonts/Triodion
+	url = https://github.com/slavonic/Triodion.git
+[submodule "fonts/Pochaevsk"]
+	path = fonts/Pochaevsk
+	url = https://github.com/slavonic/Pochaevsk.git
+[submodule "fonts/Acathist"]
+	path = fonts/Acathist
+	url = https://github.com/slavonic/Acathist.git
+[submodule "fonts/Monomakh"]
+	path = fonts/Monomakh
+	url = https://github.com/slavonic/Monomakh.git

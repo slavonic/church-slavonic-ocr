@@ -1,0 +1,8 @@
+TODO: choose a license before publishing.
+
+Recommended split (see README "License & attribution"):
+  * Code in scripts/  -> a permissive OSS license (Apache-2.0 or MIT).
+  * model/cu.traineddata -> a data/model license (e.g. Apache-2.0 or CC-BY-4.0),
+    noting it is a derivative of the corpus and fonts below.
+  * corpus/ (cu-md-sandbox) and fonts/ (Ponomar et al.) keep THEIR OWN licenses;
+    they are git submodules and are not relicensed here.

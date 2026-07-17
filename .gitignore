@@ -1,0 +1,23 @@
+# --- synthetic ground truth: regenerate with scripts/build_dataset.sh, do NOT commit ---
+data/cu-ground-truth/*
+!data/cu-ground-truth/.gitkeep
+
+# --- tesstrain working state (checkpoints, unicharset, proto model) ---
+training/*
+!training/.gitkeep
+
+# --- the trained model ships as a Release asset, not in the repo ---
+model/*.traineddata
+
+# --- evaluation OCR cache ---
+*.hyp.txt
+
+# --- generated eval reports are fine to regenerate ---
+model/eval/*
+!model/eval/.gitkeep
+
+# --- python / os ---
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

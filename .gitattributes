@@ -1,0 +1,9 @@
+# Ground-truth transcriptions: force LF so line endings never vary across platforms.
+*.gt.txt text eol=lf
+
+# Line-image crops are small (~8 KB) and write-once — plain git handles them fine,
+# no Git LFS needed. Mark them binary so git won't attempt text diffs.
+*.png binary
+
+# The trained model is not stored in the repo — it ships as a GitHub Release
+# asset (see model/README.md).
