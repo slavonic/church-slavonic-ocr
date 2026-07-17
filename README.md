@@ -59,7 +59,7 @@ accuracy is separable from diacritic placement (see `docs/evaluation.md`).
 
 This repository combines works under different licenses; please respect each:
 
-- **Code** (`scripts/`) — see [`LICENSE`](LICENSE) (a permissive OSS license is recommended).
+- **Code** (`scripts/`) — see [`LICENSE`](LICENSE) (MIT License).
 - **Corpus** (`corpus/`, submodule) — retains the license of `slavonic/cu-md-sandbox`.
 - **Fonts** (`fonts/`, submodules) — each retains its own license (the Ponomar
   project fonts are under the SIL Open Font License).
