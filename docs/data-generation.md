@@ -28,9 +28,11 @@ URLs (the source of stray Latin/hex/`png` debris), and the inline delimiters
 and escape markers) — keeping the text they wrap.
 
 A character **allow-set** then filters anything outside real Church Slavonic:
-Cyrillic blocks (minus Ё/ё and Azerbaijani schwa), combining marks, print
-punctuation, `()` and `[]`, guillemets, the liturgical symbols (U+1F540–U+1F545),
-and Arabic digits. `--charset-filter drop|strip|off` controls handling;
+Cyrillic blocks, combining marks, print punctuation, `()` and `[]`, guillemets,
+the liturgical symbols (U+1F540–U+1F545), and Arabic digits — with Ё/ё and the
+Azerbaijani schwa Ә/ә explicitly removed from the Cyrillic block, since neither
+belongs to Church Slavonic orthography despite sharing Unicode's Cyrillic range.
+`--charset-filter drop|strip|off` controls handling;
 `--no-digits` and `--allow-extra` adjust the set. The run prints how many lines
 were affected and the top offending characters — watch this to catch anything
 legitimate being dropped.
