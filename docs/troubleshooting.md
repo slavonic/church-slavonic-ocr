@@ -28,7 +28,7 @@ Cyrillic-derived charset survived a supposedly from-scratch run.
 ## Long runs of garbage: `ЩщОощеҹоҹҹ…` where short text should be
 
 The recognizer is reading **noise**, not text — doubled superscripts and stacked
-accents are the diacritic band of a neighbouring line plus scan speckle. This is
+accents are the diacritic band of a neighboring line plus scan speckle. This is
 an **image-quality / segmentation** problem, not the model.
 
 - Prove it: OCR one *clean* line crop with `--psm 13`. If it reads fine, the

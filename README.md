@@ -22,18 +22,25 @@ real scans with a small hand-corrected fine-tuning set.
 | `training/` | tesstrain working state (checkpoints, unicharset) — not committed |
 | `docs/` | the full workflow, per-stage guides, and troubleshooting |
 
-## Quickstart
+## Just want to OCR?
+
+No clone needed — download `cu.traineddata` from the [**Releases**](../../releases)
+page, then:
+
+```bash
+tesseract your_line.png stdout --psm 13 -l cu --tessdata-dir /path/to/download-dir
+# (or copy it into your tessdata/ dir to use -l cu directly — see model/README.md)
+```
+
+## Quickstart (reproduce / retrain)
 
 ```bash
 # 1. clone with submodules (corpus + fonts) and install python deps
 git clone --recurse-submodules <this-repo> && cd church-slavonic-ocr
-make setup
+python3 -m venv .venv && source .venv/bin/activate
+make setup         # git submodule update --init --recursive + pip install -r requirements.txt
 
-# 2. just want to OCR? download cu.traineddata from the Releases page, then:
-tesseract your_line.png stdout --psm 13 -l cu --tessdata-dir /path/to/download-dir
-# (or copy it into your tessdata/ dir to use -l cu directly — see model/README.md)
-
-# 3. want to reproduce/retrain? see docs/pipeline.md
+# 2. see docs/pipeline.md for the full workflow
 make dataset       # regenerate synthetic ground truth
 make train         # from-scratch tesstrain run (needs a tesstrain checkout)
 make eval          # score against data/real-lines/eval

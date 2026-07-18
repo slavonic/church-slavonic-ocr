@@ -297,9 +297,10 @@ def main():
                     help="fraction of line-breaks to hyphenate (e.g. 0.2), teaching the "
                          "model line-end word splits. 0 = off. GT gets '_'; the image "
                          "shows --hyphen-glyph")
-    ap.add_argument("--hyphen-glyph", default="-",
+    ap.add_argument("--hyphen-glyph", default="_",
                     help="glyph rendered for a hyphenation break (GT stays '_'). Set to "
-                         "whatever your books actually print, e.g. '-' or '⸗'")
+                         "whatever your books actually print, e.g. '-' as in the books "
+                         "printed by the Commission under Metropolitan Sergius")
     ap.add_argument("--seed", type=int, default=None,
                     help="RNG seed for reproducible hyphenation/degradation")
     ap.add_argument("--rotate-fonts", action="store_true",

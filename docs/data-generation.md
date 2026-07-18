@@ -9,7 +9,7 @@ Pinned invocation: `scripts/build_dataset.sh` (called by `make dataset`).
 ## Rendering
 
 Rendering goes through Pillow's RAQM layout engine (HarfBuzz), so the fonts'
-GPOS mark positioning is honoured — titla, pokrytie, stacked breathing+accent,
+GPOS mark positioning is honored — titla, pokrytie, stacked breathing+accent,
 and superscript letters stack correctly. Tesseract's own `text2image` is avoided
 because its older shaping path mispositions stacked Cyrillic marks.
 
@@ -39,6 +39,53 @@ legitimate being dropped.
 > class in the model, which then emits it on noisy input. Training from scratch
 > does **not** fix contamination baked into the data — the clean charset does.
 
+### Allow-set examples
+
+Say a corpus line reads `Спасѐ на́съ, Nоtа bene†` — real CU text with a stray
+editorial aside (`Nоtа bene†` — Latin letters, a footnote dagger, none of it
+meant for the model):
+
+```bash
+# default: --charset-filter drop — the whole line is dropped, since some of
+# its characters (N, o, t, a, b, e, n, e, †) are outside the allow-set
+scripts/cu_make_training_data.py --fonts Ponomar --charset-filter drop ...
+# -> line skipped entirely; shows up in the drop-reason counts printed at the end
+
+# --charset-filter strip — keep the line, remove just the offending characters
+scripts/cu_make_training_data.py --fonts Ponomar --charset-filter strip ...
+# -> ground truth becomes "Спасѐ на́съ, "  (Latin/dagger gone, CU kept)
+# strip is useful when offending runs are rare interpolations you don't want
+# to lose whole lines over, but double-check the result isn't mangled — a
+# strip in the middle of a word can glue two unrelated fragments together
+
+# --charset-filter off — keep everything, including out-of-set characters
+scripts/cu_make_training_data.py --fonts Ponomar --charset-filter off ...
+# -> ground truth keeps "Спасѐ на́съ, Nоtа bene†" verbatim; only use this to
+# inspect what the filter would otherwise catch (e.g. piping to a report),
+# not for lines that go into an actual training run
+```
+
+`--allow-extra` widens the set instead of loosening the filter mode — use it
+when a character is legitimate but not covered by the defaults, e.g. the corpus
+uses `№` and `§` in rubrics you want to keep:
+
+```bash
+scripts/cu_make_training_data.py --fonts Ponomar --allow-extra '№§' ...
+# -> lines containing № or § are no longer dropped/stripped; every other
+# out-of-set character (Latin letters, stray symbols) is still filtered
+```
+
+`--no-digits` narrows the set the other way, dropping Arabic `0-9` from the
+allow-set (they're kept by default since most books print Arabic
+numerals rather than Cyrillic numerals for things like page numbering):
+
+```bash
+scripts/cu_make_training_data.py --fonts Ponomar --no-digits ...
+# -> a line like "глава 12" is treated as containing an out-of-set run ("12"),
+# so --charset-filter drop/strip applies to the digits same as any other
+# disallowed character
+```
+
 ## Hyphenation injection
 
 Real scans hyphenate words at line-ends; the corpus does not. `--hyphenate RATE`
@@ -47,11 +94,10 @@ hyphenation mark. Splits are grapheme-safe (accents/titla never orphaned) and
 prefer vowel boundaries (syllable-ish).
 
 The ground truth records the mark as `_` (the project convention); the rendered
-image shows `--hyphen-glyph` (default `-`). Set the glyph to whatever your target
-books actually print — if that is a distinct mark like the double-oblique `⸗`,
-use a face that contains it (coverage-checked automatically). Note that rendering
-line-breaks as `-` collides with compound hyphens, so the `-`/`_` distinction
-becomes positional; a distinct glyph avoids that.
+image shows `--hyphen-glyph` (default `_`, matching the ground truth). Set the
+glyph to whatever your target books actually print — e.g. `-`, as in the books
+printed by the Commission under Metropolitan Sergius — using a face that
+contains it (coverage-checked automatically).
 
 ## Degradation
 

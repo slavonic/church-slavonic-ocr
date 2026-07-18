@@ -63,6 +63,22 @@ make -C $TESSTRAIN training MODEL_NAME=cu START_MODEL=cu \
   MAX_ITERATIONS=<a few thousand>
 ```
 
+## How the unicharset is built
+
+You never invoke this directly — `make train` triggers it as an early tesstrain
+phase — but it's worth knowing where `training/cu/unicharset` comes from when
+debugging a garbled model. tesstrain concatenates every `.gt.txt` line under
+`GROUND_TRUTH_DIR` into `training/cu/all-gt`, then runs Tesseract's
+`unicharset_extractor` over that file to collect the distinct characters actually
+present in the ground truth (plus `combine_lang_model` to fold in the recoder/
+Unicode properties). The result is a from-scratch charset scoped to exactly what
+your corpus contains — no leftover glyphs from `rus` or any other base model. This
+is why the charset always tracks the ground truth: add `_` for hyphenation or
+widen `--allow-extra`, regenerate the dataset, and the next `unicharset_extractor`
+run picks up the new symbols automatically. It's also why stale state is
+dangerous — an old `unicharset` built before an allow-set change doesn't know
+about the new characters until you clear it (see below).
+
 ## Resetting the charset
 
 Changing the allow-set (e.g. adding digits or `_`) requires rebuilding the
