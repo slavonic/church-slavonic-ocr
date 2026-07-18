@@ -28,18 +28,23 @@ directories until you've reviewed it:
   binarize first (Sauvola + deskew) and use `--psm 4`. See `docs/troubleshooting.md`.
 
 Once every `.gt.txt` in the staging dir is corrected (or deleted, for noise),
-move each surviving `<stem>.png` + `<stem>.gt.txt` pair — as a pair, they must
-travel together — into whichever of the two committed directories it belongs
-in. `staging/` is gitignored and meant to be cleared out after each batch, not
+each surviving `<stem>.png` + `<stem>.gt.txt` pair still needs to land in
+whichever of the two committed directories it belongs in — **as a pair**, they
+must travel together, which is exactly what's error-prone about doing it by
+hand with `cp`/`mv` (typo the destination, move only one of the two files,
+copy instead of move and end up with the same line staged *and* committed).
+`review_staging.py` (below) does this as part of the same review pass instead.
+`staging/` is gitignored and meant to be cleared out after each batch, not
 accumulated in.
 
 ### Correcting the staging batch — `review_staging.py`
 
 Editing dozens of `.gt.txt` files by hand against their crops (opening each PNG,
-retyping the text, deleting the noise ones) is exactly the kind of thing worth
-a small UI for. `scripts/review_staging.py` serves the staging dir as a local
-web page: crop on top, an editable textarea prefilled with the current guess
-below, and Save/Delete/Skip:
+retyping the text, deleting the noise ones, then sorting the survivors into
+`eval/`/`finetune/`) is exactly the kind of thing worth a small UI for.
+`scripts/review_staging.py` serves the staging dir as a local web page: crop on
+top, an editable textarea prefilled with the current guess below, and buttons
+to save, delete, or file the pair straight into its destination:
 
 ```bash
 make review-staging                          # data/real-lines/staging, opens a browser tab
@@ -47,19 +52,29 @@ python3 scripts/review_staging.py --dir data/real-lines/staging --port 8080
 ```
 
 - **Save & next** (`Ctrl+Enter`) writes the edited text to that `.gt.txt` and
-  advances to the next pair.
+  advances to the next pair, without moving it out of staging.
+- **→ eval** / **→ finetune** (`Ctrl+E` / `Ctrl+F`) save the edited text, then
+  move *both* `.png` and `.gt.txt` — together, atomically, never one without
+  the other — straight into `data/real-lines/eval/` or `data/real-lines/finetune/`.
+  If a file with that name already exists at the destination, the move is
+  refused (with the conflict shown in the page) rather than silently
+  overwriting anything; resolve that by hand.
 - **Delete pair** (`Ctrl+Delete`) removes both the `.png` and `.gt.txt` —
   segmentation noise, not a real line — after a confirmation prompt (there's no
   undo).
 - **Skip** moves on without changing anything.
-- Once a pair is saved or deleted it drops out of the queue for that run, so
-  repeatedly hitting save-and-next works through the whole batch; closing and
-  reopening the tool re-offers everything still on disk (harmless, since
-  staging is meant to be a one-batch-at-a-time scratch area anyway).
+- The textarea renders in a real CU face (Ponomar by default, `--font` to pick
+  another `.ttf`) instead of the system monospace font, so titla and diacritics
+  in what you're typing are visibly correct while you correct it, not just
+  ASCII-transliterated guesswork.
+- A pair drops out of the queue for that run once saved, moved, or deleted, so
+  repeatedly hitting one action works through the whole batch; closing and
+  reopening the tool re-offers anything still left in staging (harmless — a
+  pair already moved out is simply gone from the directory it's scanning).
+- `--eval-dir`/`--finetune-dir` override the destinations if you're not
+  working from the repo root.
 
-It's a stdlib-only local server (no new dependency), bound to `127.0.0.1`; it
-doesn't touch `eval/`/`finetune/` or decide the split — that's still your call,
-made by moving the corrected pairs afterward as described above.
+It's a stdlib-only local server (no new dependency), bound to `127.0.0.1`.
 
 Split the corrected results between two directories with different jobs:
 

@@ -36,8 +36,9 @@ few KB each), so plain git handles them — no Git LFS needed.
 
 Produce more of either with `scripts/extract_lines.py` (PDF/DJVU → crops +
 pre-filled `.gt.txt`), pointed at `real-lines/staging/` — a gitignored scratch
-area, not `eval/`/`finetune/` directly. Correct each `.gt.txt` against its crop
-(or delete the pair if segmentation grabbed noise), then move each surviving
-pair into whichever of `eval/`/`finetune/` it belongs in. See
-`docs/evaluation.md` for the full workflow. Keep the eval and finetune sets
-strictly disjoint.
+area, not `eval/`/`finetune/` directly. Then use `scripts/review_staging.py`
+(`make review-staging`) to correct each `.gt.txt` against its crop and file the
+pair straight into `eval/` or `finetune/` — it moves the `.png`+`.gt.txt` pair
+together in one action, so they can't end up separated or copied into the
+wrong place the way a manual `cp`/`mv` can. See `docs/evaluation.md` for the
+full workflow. Keep the eval and finetune sets strictly disjoint.
