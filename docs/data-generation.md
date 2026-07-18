@@ -4,7 +4,23 @@ Turns the Markdown corpus into Tesseract LSTM training pairs: for every line a
 `.gt.txt` (ground truth) and a `.png` (that exact line rendered), one line per
 image so text and image can never drift apart.
 
-Pinned invocation: `scripts/build_dataset.sh` (called by `make dataset`).
+Pinned invocation: `scripts/build_dataset.sh` (called by `make dataset`), which
+expands to:
+
+```bash
+python3 scripts/cu_make_training_data.py \
+  --corpus corpus \
+  --out data/cu-ground-truth \
+  --fonts fonts/Ponomar/fonts/ttf/Ponomar-Regular.ttf \
+          fonts/Triodion/fonts/ttf/Triodion-Regular.ttf \
+          fonts/Pochaevsk/fonts/ttf/Pochaevsk-Regular.ttf \
+          fonts/Acathist/fonts/ttf/Acathist-Regular.ttf \
+          fonts/Monomakh/fonts/ttf/Monomakh-Regular.ttf \
+  --dedupe --degrade \
+  --hyphenate 0.20 --hyphen-glyph '_' \
+  --seed 1 \
+  --limit "${LIMIT:-40000}"
+```
 
 ## Rendering
 

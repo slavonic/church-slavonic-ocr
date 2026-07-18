@@ -17,6 +17,6 @@ python3 scripts/cu_make_training_data.py \
   --out data/cu-ground-truth \
   --fonts "${FONTS[@]}" \
   --dedupe --degrade \
-  --hyphenate 0.20 --hyphen-glyph '-' \
+  --hyphenate 0.20 --hyphen-glyph '_' \
   --seed 1 \
   --limit "${LIMIT:-40000}"
