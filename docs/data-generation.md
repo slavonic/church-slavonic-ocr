@@ -83,6 +83,29 @@ scripts/cu_make_training_data.py --fonts Ponomar --charset-filter off ...
 # not for lines that go into an actual training run
 ```
 
+### Guaranteed coverage of rare characters
+
+`--limit` caps the run at the first N distinct lines in corpus order — fine for
+most characters, since the corpus repeats formulae heavily, but the Typicon
+liturgical symbols (U+1F540–U+1F547) and the lettered titlo (superscript
+combining Cyrillic letters, U+2DE0–U+2DFF) are rare enough that a low `--limit`
+can cut off before the corpus's *only* line containing a given one of them is
+ever reached. Left unguarded, that codepoint never enters the ground truth,
+never becomes a unicharset class (see `docs/training.md`), and the model can
+never produce it.
+
+To prevent that, the script scans the full corpus first and keeps at least one
+line for every distinct rare codepoint that appears anywhere, regardless of
+`--limit` — these lines aren't optional and aren't counted against the cap;
+regular lines fill the remaining budget up to N. If covering every rare
+codepoint alone needs more lines than `--limit` allows, the run prints a NOTE
+and keeps them all anyway rather than silently dropping coverage:
+
+```
+NOTE: 19 lines are needed to cover every rare Typicon symbol/lettered titlo
+in the corpus, above --limit 5; keeping all of them anyway.
+```
+
 `--allow-extra` widens the set instead of loosening the filter mode — use it
 when a character is legitimate but not covered by the defaults, e.g. the corpus
 uses `№` and `§` in rubrics you want to keep:
@@ -136,3 +159,41 @@ reality inflates synthetic error without buying robustness (see
 | `--no-digits` | exclude Arabic digits (kept by default) |
 | `--limit N` | cap distinct lines (total pairs ≈ N × faces) |
 | `--seed N` | reproducible hyphenation/degradation |
+
+## Manual review — `review_samples.py`
+
+A ground-truth dir holds hundreds of thousands of `.gt.txt`/`.png` pairs — too
+many for a shell glob or file manager to list, and no way to eyeball at a
+glance. `scripts/review_samples.py` pulls a handful of samples matching a
+substring and stacks their line images into a single montage PNG, so you can
+spot-check rendering (mark positioning, hyphenation, degradation) without
+opening the dir at all:
+
+```bash
+make review     # python3 scripts/review_samples.py data/cu-ground-truth \
+                 #   --n 8 --out model/eval/review.png
+```
+
+It walks the directory lazily (`os.scandir`, never a full listing), so it
+scales to the full dataset. Useful invocations:
+
+```bash
+# default: 8 lines containing '_' (i.e. hyphenated lines, the project's GT mark)
+python3 scripts/review_samples.py data/cu-ground-truth --n 8
+
+# check what a specific rendered hyphen glyph actually looks like
+python3 scripts/review_samples.py data/cu-ground-truth --contains '-' --n 12
+
+# spread picks across books instead of clustering in the first-scanned book
+python3 scripts/review_samples.py data/cu-ground-truth --contains '_' --every 50
+
+# eyeball lines with a specific rare character, e.g. a Typicon symbol
+python3 scripts/review_samples.py data/cu-ground-truth --contains '⛝' --n 6
+```
+
+Ground truth for each pick prints to the terminal (`[0] ...`, `[1] ...`, …)
+above the montage, in the same order as the numbered rows in the image, so you
+can line up what you expect to see against what actually rendered — the usual
+things to catch are misplaced titla/accents, a hyphenation split landing
+mid-cluster, or degradation that's gone further than real scans (see
+`docs/troubleshooting.md`).

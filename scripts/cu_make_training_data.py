@@ -99,6 +99,17 @@ def paragraphs(text: str):
 # Church Slavonic vowels (base letters) -- to bias hyphenation toward syllable breaks.
 VOWELS = set("аеѣиіїоᲂѡꙋуюыэєѧѫѩѭѵꙗ")
 
+# Codepoint ranges rare enough that --limit's early cutoff can silently drop every
+# occurrence of some of them: the Typicon (liturgical) symbols and the "lettered
+# titlo" -- superscript combining Cyrillic letters used to spell out words
+# abbreviated under a titlo. Every such codepoint that appears anywhere in the
+# corpus is guaranteed a line in the ground truth regardless of --limit.
+RARE_RANGES = [(0x1F540, 0x1F548), (0x2DE0, 0x2E00)]
+
+
+def rare_chars(line: str) -> set:
+    return {ch for ch in line if any(lo <= ord(ch) < hi for lo, hi in RARE_RANGES)}
+
 
 def grapheme_starts(w: str):
     """Char indices that begin a grapheme cluster (a base letter + its combining
@@ -312,8 +323,10 @@ def main():
     ap.add_argument("--no-coverage-check", action="store_true",
                     help="skip per-font glyph-coverage filtering (not recommended)")
     ap.add_argument("--limit", type=int, default=0,
-                    help="stop after N distinct lines (smoke test). Total pairs ~= "
-                         "N x fonts, unless --rotate-fonts")
+                    help="cap at N distinct lines (smoke test). Total pairs ~= "
+                         "N x fonts, unless --rotate-fonts. Lines carrying a Typicon "
+                         "symbol or lettered titlo not yet seen are always kept, even "
+                         "past N")
     ap.add_argument("--no-render", action="store_true",
                     help="write only .gt.txt files")
     args = ap.parse_args()
@@ -341,10 +354,32 @@ def main():
     mode = "one cycled face per line" if args.rotate_fonts else "every face per line"
     print(f"  mode: {mode} ({len(fonts)} faces)", file=sys.stderr)
 
+    all_lines = list(samples(args.corpus, args.width, args.min_chars, args.dedupe,
+                              allowed, args.charset_filter, drops,
+                              args.hyphenate, rng))
+
+    if args.limit and args.limit < len(all_lines):
+        seen_rare, essential_idx = set(), []
+        for i, (_, line) in enumerate(all_lines):
+            new = rare_chars(line) - seen_rare
+            if new:
+                essential_idx.append(i)
+                seen_rare |= new
+        if len(essential_idx) > args.limit:
+            print(f"  NOTE: {len(essential_idx)} lines are needed to cover every rare "
+                  f"Typicon symbol/lettered titlo in the corpus, above --limit "
+                  f"{args.limit}; keeping all of them anyway.", file=sys.stderr)
+        keep = set(essential_idx)
+        for i in range(len(all_lines)):
+            if len(keep) >= args.limit:
+                break
+            keep.add(i)
+        selected = [all_lines[i] for i in sorted(keep)]
+    else:
+        selected = all_lines
+
     n_lines, pairs, skipped = 0, 0, Counter()
-    for book, gt_line in samples(args.corpus, args.width, args.min_chars, args.dedupe,
-                                 allowed, args.charset_filter, drops,
-                                 args.hyphenate, rng):
+    for book, gt_line in selected:
         n_lines += 1
         # ground truth keeps '_'; the rendered image shows the real hyphen glyph
         render_line = gt_line.replace("_", args.hyphen_glyph) if args.hyphenate else gt_line
@@ -377,8 +412,6 @@ def main():
 
         if n_lines % 2000 == 0:
             print(f"  {n_lines} lines -> {pairs} pairs...", file=sys.stderr)
-        if args.limit and n_lines >= args.limit:
-            break
 
     print(f"\nDone: {n_lines} distinct lines -> {pairs} pairs in {args.out}",
           file=sys.stderr)
