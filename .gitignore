@@ -12,6 +12,9 @@ model/*.traineddata
 # --- evaluation OCR cache ---
 *.hyp.txt
 
+# --- review_samples.py default output (make review writes to model/eval/, already ignored) ---
+/review.png
+
 # --- generated eval reports are fine to regenerate ---
 model/eval/*
 !model/eval/.gitkeep

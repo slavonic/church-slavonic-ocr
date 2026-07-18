@@ -188,7 +188,7 @@ python3 scripts/review_samples.py data/cu-ground-truth --contains '-' --n 12
 python3 scripts/review_samples.py data/cu-ground-truth --contains '_' --every 50
 
 # eyeball lines with a specific rare character, e.g. a Typicon symbol
-python3 scripts/review_samples.py data/cu-ground-truth --contains '⛝' --n 6
+python3 scripts/review_samples.py data/cu-ground-truth --contains '🕁' --n 6
 ```
 
 Ground truth for each pick prints to the terminal (`[0] ...`, `[1] ...`, …)
