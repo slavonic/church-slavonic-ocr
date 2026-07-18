@@ -9,6 +9,10 @@ training/*
 # --- the trained model ships as a Release asset, not in the repo ---
 model/*.traineddata
 
+# --- extract_lines.py staging area: unsorted, not-yet-reviewed crops ---
+data/real-lines/staging/*
+!data/real-lines/staging/.gitkeep
+
 # --- evaluation OCR cache ---
 *.hyp.txt
 

@@ -2,7 +2,12 @@
 
 Training uses [tesstrain](https://github.com/tesseract-ocr/tesstrain) as the
 harness; this repo supplies the ground truth and holds the result. tesstrain is
-kept as a separate checkout (set `TESSTRAIN=` for the Makefile, default `../tesstrain`).
+**not part of this repo** — it's not a submodule, and it isn't installed inside
+this checkout. It's kept as a separate, independent checkout outside this
+repo's tree entirely (set `TESSTRAIN=` for the Makefile, default `../tesstrain`,
+a sibling of this directory). The clone command below must be run from
+*outside* this repo (e.g. one level up) — cloning it inside `church-slavonic-ocr/`
+leaves an untracked directory that doesn't match the default path.
 
 ## Prerequisites
 
@@ -19,7 +24,9 @@ which lstmtraining || {           # build the training tools if missing
   sudo make install && make training && sudo make training-install && sudo ldconfig
   cd ..
 }
-git clone https://github.com/tesseract-ocr/tesstrain     # the harness
+cd ..                                                     # OUT of church-slavonic-ocr/
+git clone https://github.com/tesseract-ocr/tesstrain      # the harness, as a SIBLING dir
+cd church-slavonic-ocr                                    # back into this repo
 ```
 
 ## From-scratch run
@@ -51,6 +58,16 @@ cp training/cu.traineddata model/
   before ~25–30k; watch the trend with `scripts/watch_training.py`.
 
 ## Fine-tuning on real lines
+
+`data/real-lines/finetune/` isn't part of this repo's automated pipeline — it's
+built by hand from real scans with `scripts/extract_lines.py`, which rasterizes
+book pages and runs the current model to produce a line crop plus a first-pass
+`.gt.txt` guess per line; you then correct every `.gt.txt` against its crop
+(titla, superscripts, everything) before it's usable as ground truth. See
+`docs/evaluation.md` for the extraction command and correction workflow — the
+same process also produces `data/real-lines/eval/`, so make sure the lines you
+put in `finetune/` are disjoint from `eval/`, or the held-out score stops
+meaning anything.
 
 The highest-leverage step once the synthetic model is clean. Copy corrected real
 lines into the ground-truth dir (so the charset picks up their glyphs), keeping
