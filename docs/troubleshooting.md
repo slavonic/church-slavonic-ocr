@@ -33,9 +33,12 @@ an **image-quality / segmentation** problem, not the model.
 
 - Prove it: OCR one *clean* line crop with `--psm 13`. If it reads fine, the
   model is healthy and the page path is at fault.
-- Fix: binarize before OCR (Sauvola handles uneven historical paper), deskew,
-  despeckle, suppress show-through, and segment with `--psm 4`. Quick test:
-  `convert page.png -colorspace Gray -lat 25x25+10% -despeckle /tmp/bw.png`.
+- Fix: binarize before OCR (Sauvola handles uneven historical paper) and
+  deskew, then segment with `--psm 4`. `extract_lines.py --deskew --binarize`
+  does both directly (see `docs/evaluation.md`), applied before segmentation/OCR
+  and before crops are cut, so the boxes and the saved lines see the same
+  cleaned-up page. `--sauvola-window`/`--sauvola-k` tune the binarization if the
+  defaults over- or under-ink a particular scan.
 
 ## Model garbles even a *real* line, but structure is preserved
 

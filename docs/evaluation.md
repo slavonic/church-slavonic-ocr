@@ -25,7 +25,34 @@ directories until you've reviewed it:
 - `--dpi 300–400` is the sweet spot; below ~300 the accent band smears and you
   measure the rasterization, not the model.
 - If a page OCRs as noise, its scan quality is the problem, not the model —
-  binarize first (Sauvola + deskew) and use `--psm 4`. See `docs/troubleshooting.md`.
+  add `--deskew --binarize` (see below) and use `--psm 4`. See `docs/troubleshooting.md`.
+
+### Preprocessing noisy scans — `--deskew` / `--binarize`
+
+Both are opt-in and off by default (clean scans don't need them and Sauvola
+binarization does throw away gray information, so don't reach for it
+reflexively); they run on the rasterized page *before* line segmentation/OCR
+and before crops are cut, so the boxes tesseract finds and the crop you end up
+correcting both see the same cleaned-up image:
+
+```bash
+python3 scripts/extract_lines.py book.pdf --pages 12-15 --out data/real-lines/staging \
+        --model cu --dpi 400 --tessdata-dir model --deskew --binarize --psm 4
+```
+
+- **`--deskew`** estimates page rotation with a projection-profile search
+  (rotate a downscaled ink mask through candidate angles, keep the one whose
+  horizontal ink-per-row profile has the most variance — tightly-packed text
+  baselines produce sharp peaks; a skewed page smears them out) and rotates the
+  full-resolution page to correct it. `--deskew-range`/`--deskew-step` control
+  the search (default ±5°, 0.2° steps).
+- **`--binarize`** applies Sauvola local-threshold binarization: each pixel is
+  judged against a threshold derived from its own neighborhood's mean and
+  contrast, rather than one global cutoff — so uneven lighting or aged/foxed
+  paper that would blow out a global threshold in one area and crush it in
+  another gets a locally-appropriate cutoff instead. `--sauvola-window` (default
+  25px) sets the neighborhood size; `--sauvola-k` (default 0.2) trades off how
+  strict the threshold is.
 
 Once every `.gt.txt` in the staging dir is corrected (or deleted, for noise),
 each surviving `<stem>.png` + `<stem>.gt.txt` pair still needs to land in

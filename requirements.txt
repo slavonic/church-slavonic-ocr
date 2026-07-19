@@ -1,7 +1,7 @@
 # Python dependencies for the tooling in scripts/
 # (Tesseract itself + its training tools are system packages, see docs/training.md)
 pillow>=10        # HarfBuzz-shaped rendering (RAQM) + image ops
-numpy>=1.24       # degradation noise
+numpy>=1.24       # degradation noise; deskew/Sauvola binarization (extract_lines.py)
 fonttools>=4.40   # per-font glyph-coverage checks
 pymupdf>=1.23     # PDF page rasterization (extract_lines.py)
 matplotlib>=3.7   # live training monitor (watch_training.py)

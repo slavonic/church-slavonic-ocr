@@ -17,6 +17,13 @@ Inputs:
   * PDF  -> rendered with PyMuPDF        (pip install pymupdf pillow)
   * DJVU -> rendered with ddjvu          (sudo apt install djvulibre-bin)
   * line segmentation + first-pass OCR   -> tesseract on PATH, model installed
+
+Optional preprocessing (--deskew, --binarize), applied to the rasterized page
+before segmentation/OCR *and* before line crops are cut, so a noisy scan gets
+one consistent treatment rather than segmentation seeing the raw page and the
+saved crop showing something else:
+  * --deskew    projection-profile skew estimate + rotation correction
+  * --binarize  Sauvola local-threshold binarization
 """
 
 import argparse
@@ -25,6 +32,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 
@@ -66,6 +74,69 @@ def render_djvu(path, pages_spec, dpi, tmp):
         yield p + 1, out
 
 
+def _box_sums(arr: np.ndarray, window: int) -> np.ndarray:
+    """Sum of each window x window neighborhood, via an integral image (O(HW)
+    regardless of window size). `arr` is edge-reflect padded by the caller."""
+    h, w = arr.shape[0] - window, arr.shape[1] - window
+    ii = np.zeros((arr.shape[0] + 1, arr.shape[1] + 1), dtype=np.float64)
+    ii[1:, 1:] = np.cumsum(np.cumsum(arr, axis=0), axis=1)
+    y0 = np.arange(h + 1)[:, None]
+    x0 = np.arange(w + 1)[None, :]
+    y1, x1 = y0 + window, x0 + window
+    return ii[y1, x1] - ii[y0, x1] - ii[y1, x0] + ii[y0, x0]
+
+
+def sauvola_binarize(img: Image.Image, window: int = 25, k: float = 0.2, r: float = 128.0) -> Image.Image:
+    """Sauvola local-threshold binarization: a pixel is ink if it's darker than
+    a threshold set from the local mean and local contrast (std), so uneven
+    scan lighting doesn't blow out one part of the page while crushing another
+    (the failure mode a single global threshold has on real scans)."""
+    if window % 2 == 0:
+        window += 1
+    arr = np.asarray(img, dtype=np.float64)
+    pad = window // 2
+    padded = np.pad(arr, pad, mode="reflect")
+    n = window * window
+    s1 = _box_sums(padded, window)
+    s2 = _box_sums(padded * padded, window)
+    mean = s1 / n
+    var = np.maximum(s2 / n - mean * mean, 0)
+    std = np.sqrt(var)
+    thresh = mean * (1 + k * (std / r - 1))
+    out = np.where(arr > thresh, 255, 0).astype(np.uint8)
+    return Image.fromarray(out, mode="L")
+
+
+def estimate_skew(img: Image.Image, angle_range: float = 5.0, step: float = 0.2,
+                   max_side: int = 1000) -> float:
+    """Best-fit skew angle in degrees: rotate a downscaled ink mask through
+    candidate angles and pick the one whose horizontal projection (row ink
+    sums) has the most variance -- text lines packed tightly onto their
+    baselines produce sharp peaks/troughs; a skewed page smears them out."""
+    w, h = img.size
+    scale = min(1.0, max_side / max(w, h))
+    small = img.resize((max(1, round(w * scale)), max(1, round(h * scale)))) if scale < 1 else img
+    arr = np.asarray(small, dtype=np.float64)
+    mask = Image.fromarray(((arr < arr.mean()) * 255).astype(np.uint8))  # ink -> 255
+
+    best_angle, best_score = 0.0, -1.0
+    angle = -angle_range
+    while angle <= angle_range + 1e-9:
+        rotated = mask.rotate(angle, resample=Image.BILINEAR, expand=False, fillcolor=0)
+        score = np.asarray(rotated, dtype=np.float64).sum(axis=1).var()
+        if score > best_score:
+            best_score, best_angle = score, angle
+        angle += step
+    return best_angle
+
+
+def deskew(img: Image.Image, angle_range: float = 5.0, step: float = 0.2) -> Image.Image:
+    angle = estimate_skew(img, angle_range, step)
+    if abs(angle) < 1e-6:
+        return img
+    return img.rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor=255)
+
+
 def tsv_lines(page_img, model, psm, tessdata):
     """Run tesseract TSV, yield (line_text, (l,t,r,b)) grouped by line."""
     cmd = ["tesseract", str(page_img), "stdout", "--psm", str(psm), "-l", model, "tsv"]
@@ -104,6 +175,21 @@ def main():
     ap.add_argument("--psm", type=int, default=6, help="page-seg mode for line finding (6=block)")
     ap.add_argument("--pad", type=int, default=6, help="px padding around each line crop")
     ap.add_argument("--tessdata-dir", default="")
+    ap.add_argument("--deskew", action="store_true",
+                    help="correct page skew (projection-profile estimate) before "
+                         "segmentation/OCR and before cropping")
+    ap.add_argument("--deskew-range", type=float, default=5.0, metavar="DEG",
+                    help="search +/-DEG for the best skew correction (default 5)")
+    ap.add_argument("--deskew-step", type=float, default=0.2, metavar="DEG",
+                    help="skew search resolution in degrees (default 0.2)")
+    ap.add_argument("--binarize", action="store_true",
+                    help="Sauvola local-threshold binarization before "
+                         "segmentation/OCR and before cropping")
+    ap.add_argument("--sauvola-window", type=int, default=25, metavar="PX",
+                    help="Sauvola local-neighborhood size in px, forced odd (default 25)")
+    ap.add_argument("--sauvola-k", type=float, default=0.2,
+                    help="Sauvola sensitivity constant, higher = stricter/more ink "
+                         "kept only where contrast is high (default 0.2)")
     args = ap.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -121,6 +207,15 @@ def main():
         total = 0
         for pg, img_path in pages:
             page = Image.open(img_path).convert("L")
+            if args.deskew:
+                page = deskew(page, args.deskew_range, args.deskew_step)
+            if args.binarize:
+                page = sauvola_binarize(page, args.sauvola_window, args.sauvola_k)
+            if args.deskew or args.binarize:
+                # re-run segmentation/OCR on the preprocessed page too, so the
+                # boxes and the saved crop reflect the same image
+                img_path = Path(tmp) / f"page_{pg:04d}_proc.png"
+                page.save(img_path)
             W, H = page.size
             n = 0
             for text, (l, t, r, b) in tsv_lines(img_path, args.model, args.psm,
