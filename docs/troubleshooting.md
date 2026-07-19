@@ -22,9 +22,9 @@ Cyrillic-derived charset survived a supposedly from-scratch run.
   thousands = stale) and grep it for Latin/schwa.
 - Fix (a): clean the corpus (the generator now strips links/URLs/editorial
   markup and allow-set-filters the rest — `docs/data-generation.md`) and rebuild.
-- Fix (b): `make -C $TESSTRAIN clean-output MODEL_NAME=cu DATA_DIR=$PWD/training`
-  (see "Resetting the charset" in `docs/training.md`) + remove the traineddata,
-  then retrain. A changed allow-set (adding digits, `_`) **requires** this rebuild.
+- Fix (b): `make reset-charset` (see "Resetting the charset" in
+  `docs/training.md`), then retrain. A changed allow-set (adding digits, `_`)
+  **requires** this rebuild.
 
 ## Long runs of garbage: `ЩщОощеҹоҹҹ…` where short text should be
 
@@ -49,7 +49,7 @@ correct, the network is decoding but there's a mismatch or a domain gap:
 - **Test the decisive case:** OCR a clean line straight from `data/cu-ground-truth`.
   - Garbled too → the deployed traineddata doesn't match the trained network
     (unicharset/recoder mismatch, usually from retraining on a changed charset
-    without `clean-output`). Rebuild clean.
+    without `make reset-charset`). Rebuild clean.
   - Reads fine → the model is healthy; the real-scan failure is a **domain gap**
     (image appearance + typeface). Binarize the scans and fine-tune on real lines.
 - Also rule out a stale install: `--tessdata-dir model` to force *this* model.

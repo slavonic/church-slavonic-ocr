@@ -7,7 +7,7 @@ MAX_ITERATIONS ?= 100000
 TESSTRAIN      ?= ../tesstrain        # path to a tesseract-ocr/tesstrain checkout
 JOBS           ?= $(shell nproc)
 
-.PHONY: setup dataset train eval review review-staging release clean-train
+.PHONY: setup dataset train eval review review-staging release clean-train reset-charset
 
 setup:            ## fetch corpus + font submodules and install python deps
 	git submodule update --init --recursive
@@ -48,3 +48,7 @@ release:          ## publish model/cu.traineddata as a GitHub Release asset — 
 
 clean-train:      ## wipe tesstrain scratch (keeps ground truth + model)
 	rm -rf training/* && touch training/.gitkeep
+
+reset-charset:    ## reset the charset only (unicharset/recoder/checkpoints); keeps .box/.lstmf, unlike clean-train
+	$(MAKE) -C $(TESSTRAIN) clean-output MODEL_NAME=$(MODEL_NAME) DATA_DIR=$(CURDIR)/training
+	rm -f training/$(MODEL_NAME).traineddata model/$(MODEL_NAME).traineddata

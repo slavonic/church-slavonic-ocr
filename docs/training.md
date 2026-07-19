@@ -104,24 +104,27 @@ unicharset, or old state collides with new — a classic cause of a model that
 garbles even its own synthetic lines:
 
 ```bash
-make -C $TESSTRAIN clean-output MODEL_NAME=cu DATA_DIR=$PWD/training
-rm -f training/cu.traineddata model/cu.traineddata
+make reset-charset
 make train
 ```
 
-`clean-output` drops the unicharset/recoder/checkpoints but keeps the `.lstmf`
+`reset-charset` wraps tesstrain's own `clean-output` (`make -C $(TESSTRAIN)
+clean-output MODEL_NAME=$(MODEL_NAME) DATA_DIR=$(CURDIR)/training`, using this
+repo's Makefile variables rather than a `$TESSTRAIN` you'd have to export
+yourself) plus removing the stale `.traineddata` copies. It drops the
+unicharset/recoder/checkpoints but keeps the `.box`/`.lstmf` files
 (charset-independent), so you don't pay the long regeneration again.
 
 This repo also has its own, blunter version of the same idea — `make clean-train`
 wipes the entire `training/` scratch dir (`rm -rf training/*`), including the
-`.lstmf` files `clean-output` preserves:
+`.box`/`.lstmf` files `reset-charset` preserves:
 
 ```bash
 make clean-train    # rm -rf training/* (keeps data/cu-ground-truth and model/)
 make train
 ```
 
-Reach for `clean-output` when you only need a fresh charset and want to keep the
+Reach for `reset-charset` when you only need a fresh charset and want to keep the
 expensive `.lstmf` generation; reach for `clean-train` when you want `training/`
 back to a truly empty slate (e.g. it's in some inconsistent state you don't want
 to reason about) and are fine re-paying that cost.
