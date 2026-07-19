@@ -111,6 +111,20 @@ make train
 `clean-output` drops the unicharset/recoder/checkpoints but keeps the `.lstmf`
 (charset-independent), so you don't pay the long regeneration again.
 
+This repo also has its own, blunter version of the same idea — `make clean-train`
+wipes the entire `training/` scratch dir (`rm -rf training/*`), including the
+`.lstmf` files `clean-output` preserves:
+
+```bash
+make clean-train    # rm -rf training/* (keeps data/cu-ground-truth and model/)
+make train
+```
+
+Reach for `clean-output` when you only need a fresh charset and want to keep the
+expensive `.lstmf` generation; reach for `clean-train` when you want `training/`
+back to a truly empty slate (e.g. it's in some inconsistent state you don't want
+to reason about) and are fine re-paying that cost.
+
 ## Sanity checks
 
 ```bash

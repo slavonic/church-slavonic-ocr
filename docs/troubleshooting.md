@@ -22,8 +22,9 @@ Cyrillic-derived charset survived a supposedly from-scratch run.
   thousands = stale) and grep it for Latin/schwa.
 - Fix (a): clean the corpus (the generator now strips links/URLs/editorial
   markup and allow-set-filters the rest — `docs/data-generation.md`) and rebuild.
-- Fix (b): `make clean-output` + remove the traineddata, then retrain. A changed
-  allow-set (adding digits, `_`) **requires** this rebuild.
+- Fix (b): `make -C $TESSTRAIN clean-output MODEL_NAME=cu DATA_DIR=$PWD/training`
+  (see "Resetting the charset" in `docs/training.md`) + remove the traineddata,
+  then retrain. A changed allow-set (adding digits, `_`) **requires** this rebuild.
 
 ## Long runs of garbage: `ЩщОощеҹоҹҹ…` where short text should be
 
