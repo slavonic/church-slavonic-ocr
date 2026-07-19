@@ -63,6 +63,24 @@ over ~200k pairs. The filename index climbing proves progress
 does *not* climb or the same file rebuilds every run, suspect filesystem clock
 skew (network mounts) — keep the ground truth on a local disk.
 
+## BCER pinned ~98–100% after tens of thousands of iterations (from scratch)
+
+Signature: `BCER train` ≈ 97–100% and moving ~0.02%/100 iters, `BWER` ≈ 100%,
+`mean rms` low (~6%) and slowly falling, `skip ratio` 0 — and decoding a
+training image with the current checkpoint yields empty output or a short
+near-constant stub of high-frequency glyphs (e.g. `п҆ъ`) regardless of the
+input image. That is **CTC collapse**: the net emits blank at almost every
+timestep (plus, at the few committed steps, its highest-prior classes) and is
+stuck in that basin. It will not escape with more iterations; restarting
+unchanged just rerolls the init dice.
+
+Fix: seed the feature layers instead of random init — `make train-seeded`
+(see `docs/training.md`). Do **not** use tesstrain's `START_MODEL=Cyrillic`
+for this, which merges the foreign charset back in; the seeded runner
+continues from Cyrillic's extracted `.lstm` with `--old_traineddata` so the
+output layer is rebuilt against the clean CU unicharset, and its watchdog
+aborts+retries automatically if a run collapses anyway.
+
 ## ъ/ѣ, ж/ѧ and similar minimal-pair confusions
 
 The distinguishing stroke (yat's crossbar, the yus bowl) is exactly what a

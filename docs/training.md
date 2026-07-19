@@ -2,12 +2,7 @@
 
 Training uses [tesstrain](https://github.com/tesseract-ocr/tesstrain) as the
 harness; this repo supplies the ground truth and holds the result. tesstrain is
-**not part of this repo** — it's not a submodule, and it isn't installed inside
-this checkout. It's kept as a separate, independent checkout outside this
-repo's tree entirely (set `TESSTRAIN=` for the Makefile, default `../tesstrain`,
-a sibling of this directory). The clone command below must be run from
-*outside* this repo (e.g. one level up) — cloning it inside `church-slavonic-ocr/`
-leaves an untracked directory that doesn't match the default path.
+kept as a separate checkout (set `TESSTRAIN=` for the Makefile, default `../tesstrain`).
 
 ## Prerequisites
 
@@ -24,17 +19,49 @@ which lstmtraining || {           # build the training tools if missing
   sudo make install && make training && sudo make training-install && sudo ldconfig
   cd ..
 }
-cd ..                                                     # OUT of church-slavonic-ocr/
-git clone https://github.com/tesseract-ocr/tesstrain      # the harness, as a SIBLING dir
-cd church-slavonic-ocr                                    # back into this repo
+git clone https://github.com/tesseract-ocr/tesstrain     # the harness
 ```
 
-## From-scratch run
+## Recommended: seeded training (`make train-seeded`)
 
-Church Slavonic is far enough from any base model that from-scratch with a
-clean, corpus-built unicharset is the right default (fine-tuning `rus` fights its
-priors; a stale Cyrillic charset reintroduces foreign glyphs). `make train`
-wires tesstrain to read this repo's ground truth and write scratch to `training/`:
+Two naive strategies both fail here, in opposite ways:
+
+- `START_MODEL=Cyrillic` **merges** Cyrillic's unicharset into yours
+  (`merge_unicharsets` in the tesstrain Makefile), so the model can emit
+  schwa, Latin, `©` — classes that were never in your ground truth.
+- Pure from-scratch keeps the charset clean but random init can fall into the
+  **CTC all-blank basin**: BCER pinned ~98–100% for tens of thousands of
+  iterations, low rms, near-constant short decode. Whether it escapes is a
+  dice roll on the init.
+
+`scripts/train_seeded.py` (run via `make train-seeded`) threads between them:
+
+1. builds the unicharset, proto model, and train/eval lists from **your
+   ground truth only** (tesstrain's from-scratch path — no merge), then
+   **audits the unicharset** and refuses to train if any non-CU class is in it;
+2. extracts the LSTM from stock `Cyrillic.traineddata` and continues from it
+   with `--old_traineddata`, which makes `lstmtraining` **remap the output
+   layer to your clean charset** — Cyrillic contributes only its lower
+   feature layers ("Cyrillic's eyes, your alphabet"), so training starts
+   outside the blank basin and converges much faster;
+3. a **watchdog** parses training progress and kills the run if BCER is still
+   ≥90% past ~6k iterations with no downtrend, then retries with a doubled
+   learning rate (a collapsed attempt costs minutes, not a night). A slow but
+   genuinely falling BCER is left alone.
+
+```bash
+make train-seeded                 # or directly:
+python3 scripts/train_seeded.py --tesstrain ../tesstrain --max-iterations 100000
+```
+
+Expect BCER to break downward within the first 1–2k iterations. The final
+model lands at `training/cu.traineddata` (and `model/` via the make target).
+
+## Plain from-scratch run
+
+The unseeded path — clean charset, but subject to the init dice-roll above.
+`make train` wires tesstrain to read this repo's ground truth and write
+scratch to `training/`:
 
 ```bash
 make train                       # MAX_ITERATIONS=100000 JOBS=$(nproc) by default
@@ -59,16 +86,6 @@ cp training/cu.traineddata model/
 
 ## Fine-tuning on real lines
 
-`data/real-lines/finetune/` isn't part of this repo's automated pipeline — it's
-built by hand from real scans with `scripts/extract_lines.py`, which rasterizes
-book pages and runs the current model to produce a line crop plus a first-pass
-`.gt.txt` guess per line; you then correct every `.gt.txt` against its crop
-(titla, superscripts, everything) before it's usable as ground truth. See
-`docs/evaluation.md` for the extraction command and correction workflow — the
-same process also produces `data/real-lines/eval/`, so make sure the lines you
-put in `finetune/` are disjoint from `eval/`, or the held-out score stops
-meaning anything.
-
 The highest-leverage step once the synthetic model is clean. Copy corrected real
 lines into the ground-truth dir (so the charset picks up their glyphs), keeping
 the eval set out, and continue from the current model:
@@ -79,22 +96,6 @@ make -C $TESSTRAIN training MODEL_NAME=cu START_MODEL=cu \
   DATA_DIR=$PWD/training GROUND_TRUTH_DIR=$PWD/data/cu-ground-truth \
   MAX_ITERATIONS=<a few thousand>
 ```
-
-## How the unicharset is built
-
-You never invoke this directly — `make train` triggers it as an early tesstrain
-phase — but it's worth knowing where `training/cu/unicharset` comes from when
-debugging a garbled model. tesstrain concatenates every `.gt.txt` line under
-`GROUND_TRUTH_DIR` into `training/cu/all-gt`, then runs Tesseract's
-`unicharset_extractor` over that file to collect the distinct characters actually
-present in the ground truth (plus `combine_lang_model` to fold in the recoder/
-Unicode properties). The result is a from-scratch charset scoped to exactly what
-your corpus contains — no leftover glyphs from `rus` or any other base model. This
-is why the charset always tracks the ground truth: add `_` for hyphenation or
-widen `--allow-extra`, regenerate the dataset, and the next `unicharset_extractor`
-run picks up the new symbols automatically. It's also why stale state is
-dangerous — an old `unicharset` built before an allow-set change doesn't know
-about the new characters until you clear it (see below).
 
 ## Resetting the charset
 

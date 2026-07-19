@@ -23,6 +23,12 @@ train:            ## run tesstrain from scratch, reading data/, writing training
 	  GROUND_TRUTH_DIR=$(CURDIR)/data/cu-ground-truth
 	cp training/$(MODEL_NAME).traineddata model/
 
+train-seeded:     ## RECOMMENDED: CU-only charset + Cyrillic feature seed + collapse watchdog
+	python3 scripts/train_seeded.py --tesstrain $(TESSTRAIN) \
+	  --model-name $(MODEL_NAME) --data-dir training \
+	  --ground-truth data/cu-ground-truth --max-iterations $(MAX_ITERATIONS)
+	cp training/$(MODEL_NAME).traineddata model/
+	
 eval:             ## score model/ against the held-out real lines
 	python3 scripts/cu_eval.py data/real-lines/eval --model $(MODEL_NAME) \
 	  --tessdata-dir model --report model/eval/report.html --tsv model/eval/metrics.tsv
