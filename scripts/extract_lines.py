@@ -139,7 +139,13 @@ def deskew(img: Image.Image, angle_range: float = 5.0, step: float = 0.2) -> Ima
 
 def tsv_lines(page_img, model, psm, tessdata):
     """Run tesseract TSV, yield (line_text, (l,t,r,b)) grouped by line."""
-    cmd = ["tesseract", str(page_img), "stdout", "--psm", str(psm), "-l", model, "tsv"]
+    # Set the TSV-output variable directly with -c instead of naming the "tsv"
+    # configfile: the configfile has to be *found* (tessdata-dir/configs/tsv),
+    # which fails silently -- falling back to plain text, which we'd then
+    # parse as zero rows -- whenever --tessdata-dir points at a directory that
+    # (like this project's model/) holds only a .traineddata, no configs/.
+    cmd = ["tesseract", str(page_img), "stdout", "--psm", str(psm), "-l", model,
+           "-c", "tessedit_create_tsv=1"]
     if tessdata:
         cmd += ["--tessdata-dir", tessdata]
     tsv = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
@@ -230,9 +236,12 @@ def main():
             print(f"  page {pg}: {n} lines", file=sys.stderr)
 
     print(f"\nWrote {total} line pairs to {args.out}", file=sys.stderr)
-    print("Next: correct every .gt.txt against its .png, delete any garbled-"
-          "segmentation lines,\nthen run:  python3 cu_eval.py "
-          f"{args.out} --model {args.model}", file=sys.stderr)
+    if args.out == Path("data/real-lines/staging"):
+        next_step = "make review-staging"
+    else:
+        next_step = f"python3 scripts/review_staging.py --dir {args.out}"
+    print(f"Next: review and correct these in the browser, then file each pair "
+          f"into eval/ or finetune/ --  {next_step}", file=sys.stderr)
 
 
 if __name__ == "__main__":
