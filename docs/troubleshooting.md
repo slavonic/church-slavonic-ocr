@@ -22,7 +22,7 @@ Cyrillic-derived charset survived a supposedly from-scratch run.
   thousands = stale) and grep it for Latin/schwa.
 - Fix (a): clean the corpus (the generator now strips links/URLs/editorial
   markup and allow-set-filters the rest — `docs/data-generation.md`) and rebuild.
-- Fix (b): `make reset-charset` (see "Resetting the charset" in
+- Fix (b): `make reset-charset` (see "Cleaning before retraining" in
   `docs/training.md`), then retrain. A changed allow-set (adding digits, `_`)
   **requires** this rebuild.
 
