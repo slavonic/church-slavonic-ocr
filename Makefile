@@ -38,6 +38,7 @@ review:           ## montage a few hyphenated training samples
 
 review-staging:   ## web UI to correct/delete extract_lines.py's staging output
 	python3 scripts/review_staging.py --dir data/real-lines/staging
+	python3 scripts/update_source_counts.py
 
 release:          ## publish model/cu.traineddata as a GitHub Release asset — needs gh CLI, e.g. make release VERSION=v1.0
 	@test -n "$(VERSION)" || { echo "set VERSION=vX.Y (e.g. make release VERSION=v1.0)"; exit 1; }
