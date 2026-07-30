@@ -1,18 +1,24 @@
 [submodule "corpus"]
 	path = corpus
 	url = https://github.com/slavonic/cu-md-sandbox.git
+	shallow = true
 [submodule "fonts/Ponomar"]
 	path = fonts/Ponomar
 	url = https://github.com/slavonic/Ponomar.git
+	shallow = true
 [submodule "fonts/Triodion"]
 	path = fonts/Triodion
 	url = https://github.com/slavonic/Triodion.git
+	shallow = true
 [submodule "fonts/Pochaevsk"]
 	path = fonts/Pochaevsk
 	url = https://github.com/slavonic/Pochaevsk.git
+	shallow = true
 [submodule "fonts/Acathist"]
 	path = fonts/Acathist
 	url = https://github.com/slavonic/Acathist.git
+	shallow = true
 [submodule "fonts/Monomakh"]
 	path = fonts/Monomakh
 	url = https://github.com/slavonic/Monomakh.git
+	shallow = true
