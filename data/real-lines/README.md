@@ -7,9 +7,9 @@ for how these are produced).
 | stem | citation | finetune | eval |
 |---|---|---|---|
 | `Trebnik_CSL_SPC` | Требник. — Београд, 2008. | 340 | 36 |
-| `menaion1` | Минея дополнительная: в 2-х ч. Часть 1: Сентябрь-февраль. — М.: Издательство Московской Патриархии, 2018. | 230 | 29 |
+| `menaion1` | Минея дополнительная: в 2-х ч. Часть 1: Сентябрь-февраль. — М.: Издательство Московской Патриархии, 2018. | 329 | 38 |
 | `triodion2002` | Триодь цветная. — М.: Издательский совет РПЦ, 2002. | 126 | 22 |
-| **total** | | **696** | **87** |
+| **total** | | **795** | **96** |
 
 Counts are `.gt.txt` files per stem. `make review-staging` refreshes this
 table automatically after each review session; run it standalone with:
