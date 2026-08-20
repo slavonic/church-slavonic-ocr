@@ -10,8 +10,8 @@ for how these are produced).
 | `menaion1` | Минея дополнительная: в 2-х ч. Часть 1: Сентябрь-февраль. — М.: Издательство Московской Патриархии, 2018. | 473 | 50 |
 | `newmartyrs` | Служба святым новомучеником и исповедником российским. — Джорданвилль: Типография прп. Иова Почаевского, 1983. | 94 | 9 |
 | `triodion2002` | Триодь цветная. — М.: Издательский совет РПЦ, 2002. | 126 | 22 |
-| `xenia` | Служба святей, блаженней во Христе, Ксении, бездомней страннице Петрова града. — Jordanville: Holy Trinity Monastery, б.д. | 46 | 5 |
-| **total** | | **1234** | **137** |
+| `xenia` | Служба святей, блаженней во Христе, Ксении, бездомней страннице Петрова града. — Jordanville: Holy Trinity Monastery, б.д. | 137 | 15 |
+| **total** | | **1325** | **147** |
 
 Counts are `.gt.txt` files per stem. `make review-staging` refreshes this
 table automatically after each review session; run it standalone with:
