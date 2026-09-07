@@ -18,10 +18,12 @@ Inputs:
   * DJVU -> rendered with ddjvu          (sudo apt install djvulibre-bin)
   * line segmentation + first-pass OCR   -> tesseract on PATH, model installed
 
-Optional preprocessing (--deskew, --binarize), applied to the rasterized page
-before segmentation/OCR *and* before line crops are cut, so a noisy scan gets
-one consistent treatment rather than segmentation seeing the raw page and the
-saved crop showing something else:
+Optional preprocessing (--margin, --deskew, --binarize), applied to the
+rasterized page before segmentation/OCR *and* before line crops are cut, so a
+noisy scan gets one consistent treatment rather than segmentation seeing the
+raw page and the saved crop showing something else:
+  * --margin    drop a page border (printed frame, scan edge) by insetting the
+                page, or by masking the band white and keeping the page size
   * --deskew    projection-profile skew estimate + rotation correction
   * --binarize  Sauvola local-threshold binarization
 """
@@ -72,6 +74,81 @@ def render_djvu(path, pages_spec, dpi, tmp):
         subprocess.run(["ddjvu", "-format=tiff", f"-page={p+1}", f"-scale={dpi}",
                         str(path), str(out)], check=True)
         yield p + 1, out
+
+
+def parse_margin(spec: str):
+    """Parse a --margin spec into four (value, is_percent) pairs, in
+    TOP,RIGHT,BOTTOM,LEFT order.
+
+    CSS-style shorthand is accepted: one value for all four sides, two for
+    vertical,horizontal, three for top,horizontal,bottom, or all four. A value
+    is px by default ("40", "40px"), or a share of the page's own dimension
+    when it ends in % ("5%" -- of height for top/bottom, of width for
+    left/right), which is what you want if the same spec has to hold at more
+    than one --dpi.
+    """
+    parts = [p.strip() for p in spec.split(",")]
+    if len(parts) == 1:
+        parts *= 4
+    elif len(parts) == 2:
+        parts = [parts[0], parts[1], parts[0], parts[1]]
+    elif len(parts) == 3:
+        parts = [parts[0], parts[1], parts[2], parts[1]]
+    elif len(parts) != 4:
+        raise ValueError(f"expected 1, 2, 3 or 4 comma-separated values, got {len(parts)}")
+
+    out = []
+    for part in parts:
+        pct = part.endswith("%")
+        num = part[:-1] if pct else part[:-2] if part[-2:].lower() == "px" else part
+        try:
+            value = float(num)
+        except ValueError:
+            raise ValueError(f"bad margin value {part!r} (expected e.g. 40, 40px or 5%)") from None
+        if value < 0:
+            raise ValueError(f"negative margin value {part!r}")
+        out.append((value, pct))
+    return out
+
+
+def resolve_margin(margin, W: int, H: int):
+    """Four (value, is_percent) pairs -> a (left, top, right, bottom) box of
+    the page area to keep, resolved against this page's own pixel size (so a %
+    spec follows pages that differ in size within one book)."""
+    # margin order is TOP, RIGHT, BOTTOM, LEFT: the even entries are vertical
+    # (measured against height), the odd ones horizontal (against width).
+    top, right, bottom, left = (
+        round(value * (H if i % 2 == 0 else W) / 100.0) if pct else round(value)
+        for i, (value, pct) in enumerate(margin))
+    box = (left, top, W - right, H - bottom)
+    if box[2] - box[0] < 1 or box[3] - box[1] < 1:
+        sys.exit(f"ERROR: --margin leaves nothing of the {W}x{H}px page "
+                 f"(kept box {box}); check the units -- px values scale with --dpi")
+    return box
+
+
+def apply_margin(img: Image.Image, box, mask: bool = False) -> Image.Image:
+    """Remove everything outside `box`, either by cropping the page down to it
+    (the default: the page really does get smaller) or, with mask=True, by
+    painting the border band white and leaving the page at its original size.
+
+    Both delete the same ink, so on a page with a comfortable border the two
+    usually produce identical output. They part company at the edges, via
+    --pad: cropping clamps a line's padding at the new page edge, so a line
+    sitting right against the cut gets none of it, while masking leaves real
+    white pixels there for the pad to land on. That padding is what tesseract
+    needs to read an edge line cleanly, so mask is the better choice when the
+    margin has to cut close to the text. Masking also keeps box coordinates
+    comparable to the un-margined page."""
+    if not mask:
+        return img.crop(box)
+    l, t, r, b = box
+    arr = np.asarray(img).copy()
+    arr[:t, :] = 255
+    arr[b:, :] = 255
+    arr[:, :l] = 255
+    arr[:, r:] = 255
+    return Image.fromarray(arr, mode="L")
 
 
 def _box_sums(arr: np.ndarray, window: int) -> np.ndarray:
@@ -181,6 +258,15 @@ def main():
     ap.add_argument("--psm", type=int, default=6, help="page-seg mode for line finding (6=block)")
     ap.add_argument("--pad", type=int, default=6, help="px padding around each line crop")
     ap.add_argument("--tessdata-dir", default="")
+    ap.add_argument("--margin", default="", metavar="TOP,RIGHT,BOTTOM,LEFT",
+                    help="drop a page border before segmentation: a printed frame, "
+                         "a scan edge, a running header. Values are px (40, 40px) or "
+                         "a share of the page (5%%), and CSS shorthand works: one value "
+                         "for all sides, two for vertical,horizontal. See --margin-mode")
+    ap.add_argument("--margin-mode", choices=("crop", "mask"), default="crop",
+                    help="crop: inset the page, discarding the border (default). "
+                         "mask: paint the border white but keep the page size, which "
+                         "leaves segmentation a quiet zone around the text block")
     ap.add_argument("--deskew", action="store_true",
                     help="correct page skew (projection-profile estimate) before "
                          "segmentation/OCR and before cropping")
@@ -198,6 +284,17 @@ def main():
                          "kept only where contrast is high (default 0.2)")
     args = ap.parse_args()
 
+    margin = None
+    if args.margin:
+        try:
+            margin = parse_margin(args.margin)
+        except ValueError as e:
+            ap.error(f"--margin: {e}")
+    elif args.margin_mode != "crop":
+        # a lone --margin-mode does nothing; say so rather than silently
+        # running with no border removal at all
+        ap.error("--margin-mode has no effect without --margin")
+
     args.out.mkdir(parents=True, exist_ok=True)
     book = args.input.stem
     ext = args.input.suffix.lower()
@@ -213,11 +310,19 @@ def main():
         total = 0
         for pg, img_path in pages:
             page = Image.open(img_path).convert("L")
+            if margin:
+                # first, before deskew: a frame's long straight rules and its
+                # solid side bands put ink in every row, flattening the
+                # projection profile the skew search scores. It also keeps the
+                # spec in the coordinates you measured it in -- deskew rotates
+                # with expand=True and so changes the page size.
+                page = apply_margin(page, resolve_margin(margin, *page.size),
+                                    args.margin_mode == "mask")
             if args.deskew:
                 page = deskew(page, args.deskew_range, args.deskew_step)
             if args.binarize:
                 page = sauvola_binarize(page, args.sauvola_window, args.sauvola_k)
-            if args.deskew or args.binarize:
+            if margin or args.deskew or args.binarize:
                 # re-run segmentation/OCR on the preprocessed page too, so the
                 # boxes and the saved crop reflect the same image
                 img_path = Path(tmp) / f"page_{pg:04d}_proc.png"

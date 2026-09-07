@@ -40,6 +40,14 @@ an **image-quality / segmentation** problem, not the model.
   and before crops are cut, so the boxes and the saved lines see the same
   cleaned-up page. `--sauvola-window`/`--sauvola-k` tune the binarization if the
   defaults over- or under-ink a particular scan.
+- **First check whether the garbage lines are the page border.** If the book
+  rules a frame around the text, segmentation returns the frame itself as extra
+  lines — long, full-width crops of `СБ._БСББ_Сътьсььчьс`-style noise, usually
+  the first and last line of every page, and always in the same place page to
+  page. That's not a scan-quality problem and binarizing won't touch it: strip
+  the border with `extract_lines.py --margin` (see `docs/evaluation.md`). The
+  tell is positional consistency — noise from a bad scan moves around, noise
+  from a frame doesn't.
 
 ## Model garbles even a *real* line, but structure is preserved
 

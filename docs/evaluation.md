@@ -26,12 +26,98 @@ directories until you've reviewed it:
   measure the rasterization, not the model.
 - If a page OCRs as noise, its scan quality is the problem, not the model —
   add `--deskew --binarize` (see below) and use `--psm 4`. See `docs/troubleshooting.md`.
+- If the book prints a frame around every page, strip it with `--margin`
+  (see below) or segmentation will hand you the frame as text lines.
+
+### Removing a page border — `--margin`
+
+Many older printed books rule a frame around the whole text block, and scans
+often carry a dark edge or a strip of the facing page. Segmentation has no way
+to know that band isn't text: it hands the frame back as extra "lines" of
+`СБ._БСББ_Сътьсььчьс` noise, and where the frame runs close to the text it gets
+swept into the real line boxes too.
+
+`--margin TOP,RIGHT,BOTTOM,LEFT` insets the page by a border you measure once
+and then reuse for the whole book:
+
+```bash
+python3 scripts/extract_lines.py book.pdf --pages 11-40 \
+        --out data/real-lines/staging --model cu --dpi 400 --tessdata-dir model \
+        --margin 12%
+```
+
+- Values are px (`40`, `40px`) or a share of the page (`12%` — of height for
+  top/bottom, of width for left/right). **Prefer `%`**: a px spec is tied to
+  the `--dpi` you measured it at and silently means something else at another.
+- CSS shorthand works: one value for all four sides, two for
+  `vertical,horizontal`, three for `top,horizontal,bottom`, four for each side.
+- `--margin-mode crop` (the default) really shrinks the page; `--margin-mode
+  mask` paints the band white and keeps the page at its original size. **They
+  delete the same ink, so on a clean page with a comfortable border they
+  usually produce identical output** — don't expect a difference where the
+  margin isn't cutting close to the text.
+- Where they diverge is at the edges, and the mechanism is `--pad`. Crop clamps
+  padding at the new page edge (`max(0, t - pad)`), so a line sitting against
+  the cut gets none of it; mask leaves real white pixels there, so the same
+  line gets its full pad. On a test page whose text hugs the frame, the top
+  line's crop came out 693x70 with 0px of white above the ink under `crop`, and
+  693x76 with the full 6px under `mask` — and at that margin `crop` misread the
+  line as `fAlpna line one here` where `mask` got `Alpha line one here`.
+  So: reach for `mask` when your margin has to cut close to the text.
+- It runs *before* `--deskew`, both so a frame's long rules can't flatten the
+  projection profile the skew search scores, and so the numbers you type stay
+  in the coordinates you measured them in (deskew rotates with `expand=True`
+  and so changes the page size).
+- Note that this drops anything living *outside* the frame, which is where a
+  running header or page number usually sits. That's normally what you want —
+  they aren't lines you'd fine-tune on.
+
+**Measuring the border.** The frame's ruled lines are the near-solid rows and
+columns of ink, so they're easy to find; the ornament hanging off them is not,
+which is why you add slack rather than trusting a number:
+
+```python
+import fitz, numpy as np
+from PIL import Image
+
+px = fitz.open("book.pdf")[10].get_pixmap(dpi=400)   # representative page, 0-based
+a = np.asarray(Image.frombytes("RGB", (px.width, px.height), px.samples).convert("L"))
+H, W = a.shape
+ink = a < 128
+rows = np.where(ink.sum(1) > 0.2 * W)[0]   # rows/cols that are almost solid ink
+cols = np.where(ink.sum(0) > 0.2 * H)[0]   # = the frame's ruled lines
+print(f"page {W}x{H}px, frame rules at rows {rows.min()}-{rows.max()}, cols {cols.min()}-{cols.max()}")
+print("rules sit at --margin {:.1f}%,{:.1f}%,{:.1f}%,{:.1f}%  (add ~2-3% for ornament)".format(
+    100 * rows.min() / H, 100 * (W - cols.max()) / W,
+    100 * (H - rows.max()) / H, 100 * cols.min() / W))
+```
+
+On the sample book this reports rules at `9.9%,9.4%,9.2%,9.3%`, and `--margin
+12%` is what actually clears the ornamental band. Don't try to automate the
+slack away by scanning further inward for "where the border ends" — past the
+rules the band's ink runs continuously into the first line of content, so the
+search saturates and you get a margin that eats real text.
+
+Then check one page before committing to a batch — a margin that's too small
+leaves frame noise, one that's too large quietly eats the first or last line,
+and both are cheaper to catch now than after you've staged 30 pages:
+
+```bash
+python3 scripts/extract_lines.py book.pdf --pages 11 --out /tmp/probe \
+        --model cu --dpi 400 --tessdata-dir model --margin 12%
+
+# every line the page produced, truncated -- the top and bottom ones are the tell
+for f in /tmp/probe/*.gt.txt; do printf '%s  %s\n' "${f##*_}" "$(head -c 50 "$f")"; done
+```
+
+If the first or last `.gt.txt` is long full-width noise, the margin is still
+inside the frame; if a line you can see on the page is missing, it's too big.
 
 ### Preprocessing noisy scans — `--deskew` / `--binarize`
 
-Both are opt-in and off by default (clean scans don't need them and Sauvola
-binarization does throw away gray information, so don't reach for it
-reflexively); they run on the rasterized page *before* line segmentation/OCR
+Like `--margin`, both are opt-in and off by default (clean scans don't need
+them, and Sauvola binarization does throw away gray information, so don't reach
+for it reflexively); they run on the rasterized page *before* line segmentation/OCR
 and before crops are cut, so the boxes tesseract finds and the crop you end up
 correcting both see the same cleaned-up image:
 
