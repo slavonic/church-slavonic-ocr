@@ -22,54 +22,70 @@ Cyrillic-derived charset survived a supposedly from-scratch run.
   thousands = stale) and grep it for Latin/schwa.
 - Fix (a): clean the corpus (the generator now strips links/URLs/editorial
   markup and allow-set-filters the rest — `docs/data-generation.md`) and rebuild.
-- Fix (b): `make reset-charset` (see "Cleaning before retraining" in
-  `docs/training.md`), then retrain. A changed allow-set (adding digits, `_`)
-  **requires** this rebuild.
+- Fix (b): `make clean-output` + remove the traineddata, then retrain. A changed
+  allow-set (adding digits, `_`) **requires** this rebuild.
 
 ## Long runs of garbage: `ЩщОощеҹоҹҹ…` where short text should be
 
 The recognizer is reading **noise**, not text — doubled superscripts and stacked
-accents are the diacritic band of a neighboring line plus scan speckle. This is
+accents are the diacritic band of a neighbouring line plus scan speckle. This is
 an **image-quality / segmentation** problem, not the model.
 
 - Prove it: OCR one *clean* line crop with `--psm 13`. If it reads fine, the
   model is healthy and the page path is at fault.
-- Fix: binarize before OCR (Sauvola handles uneven historical paper) and
-  deskew, then segment with `--psm 4`. `extract_lines.py --deskew --binarize`
-  does both directly (see `docs/evaluation.md`), applied before segmentation/OCR
-  and before crops are cut, so the boxes and the saved lines see the same
-  cleaned-up page. `--sauvola-window`/`--sauvola-k` tune the binarization if the
-  defaults over- or under-ink a particular scan.
-- **First check whether the garbage lines are the page border.** If the book
-  rules a frame around the text, segmentation returns the frame itself as extra
-  lines — long, full-width crops of `СБ._БСББ_Сътьсььчьс`-style noise, usually
-  the first and last line of every page, and always in the same place page to
-  page. That's not a scan-quality problem and binarizing won't touch it: strip
-  the border with `extract_lines.py --margin` (see `docs/evaluation.md`). The
-  tell is positional consistency — noise from a bad scan moves around, noise
-  from a frame doesn't.
+- Fix: binarize before OCR (Sauvola handles uneven historical paper), deskew,
+  despeckle, suppress show-through, and segment with `--psm 4`. Quick test:
+  `convert page.png -colorspace Gray -lat 25x25+10% -despeckle /tmp/bw.png`.
 
-## Model garbles even a *real* line, but structure is preserved
+## A character introduced only in fine-tune data gets consistently misread as a similar-looking existing character
 
-If word count, comma and accent positions are right and some substrings are
-correct, the network is decoding but there's a mismatch or a domain gap:
+Symptom: a mark that appears **only** in your hand-corrected real lines (never
+in the synthetic corpus) — e.g. the `~`/`‿` melisma divider — comes out as a
+different, visually similar mark that *was* in the synthetic data (e.g. `_`,
+the hyphenation token), almost every time it occurs, even though ordinary text
+in the same fine-tune is reading fine.
 
-- **Test the decisive case:** OCR a clean line straight from `data/cu-ground-truth`.
-  - Garbled too → the deployed traineddata doesn't match the trained network
-    (unicharset/recoder mismatch, usually from retraining on a changed charset
-    without `make reset-charset`). Rebuild clean.
-  - Reads fine → the model is healthy; the real-scan failure is a **domain gap**
-    (image appearance + typeface). Binarize the scans and fine-tune on real lines.
-- Also rule out a stale install: `--tessdata-dir model` to force *this* model.
+Cause: `START_MODEL=cu` fine-tuning merges unicharsets
+(`merge_unicharsets` in tesstrain — see `docs/training.md`). A character with
+no synthetic examples enters the merged unicharset as a **brand-new output
+class with random initial weights**, competing against a visually similar
+class that carries the full weight of your original run (tens of thousands of
+iterations). A short fine-tune is nowhere near enough for the new class to
+catch up — the network defaults to its confident, well-trained neighbor.
+Quantify how much of your total CER this accounts for with `cu_eval.py`'s
+built-in split (`docs/evaluation.md`) before deciding it's worth fixing.
 
-## `make training` looks stuck in a loop generating `.box` files
+Fix: give the new class real exposure — more real-line examples containing
+it in `data/real-lines/finetune/`, and/or more fine-tune iterations (a cold
+class needs materially more than a warm one to converge). This is a data/
+iteration problem, not a sign the model or the character choice is broken.
 
-Not a loop — it's the one-time box→lstmf preprocessing, one subprocess per file,
-over ~200k pairs. The filename index climbing proves progress
-(`watch 'find data/cu-ground-truth -name "*.box" | wc -l'`). Run with
-`-j$(nproc)` to parallelize; boxes are `.PRECIOUS` so it resumes. If the count
-does *not* climb or the same file rebuilds every run, suspect filesystem clock
-skew (network mounts) — keep the ground truth on a local disk.
+## Words come out flipped to full caps or alternating case, otherwise legible
+
+Symptom: an isolated word decodes with mostly-correct letters but wrong case
+throughout (`Сла́ва,` → `СѧЛА́ВАѧ`), rather than scattered single-letter errors.
+
+This is structured, not random — check the actual crop in `report.html`
+before assuming it's a model defect. Liturgical books often set incipits,
+exclamations (`Сла́ва`, `Ны́нѣ`), or headings in versals/rubricated display
+capitals, a typographic register your synthetic corpus likely never renders
+(plain body-text weight only). If the crop confirms decorative/enlarged caps,
+this is a domain gap like any other: either normalize how such words are
+transcribed, or add examples of that register to training. If the crop is
+ordinary lowercase print, it's a genuine — and separate — model confusion.
+
+## `combine_tessdata -u … Error 1` when fine-tuning (`START_MODEL=cu`)
+
+The line right before the `Error 1` names the command that failed — it's
+tesstrain unpacking `START_MODEL` via `combine_tessdata -u
+$(TESSDATA)/$(START_MODEL).traineddata …`. If `TESSDATA` wasn't passed on the
+command line, it defaults to a `usr/share/tessdata/` folder next to
+`DATA_DIR` — a path this repo never creates, so the file it's looking for
+doesn't exist. Fix: pass `TESSDATA=$PWD/training` (or `$PWD/model`) explicitly
+— see `docs/training.md`'s fine-tune section. This is specific to the plain
+`START_MODEL=` fine-tune path; `train_seeded.py` never hits it, since it
+extracts and continues from the seed model directly rather than going through
+tesstrain's own `START_MODEL` lookup.
 
 ## BCER pinned ~98–100% after tens of thousands of iterations (from scratch)
 
@@ -89,6 +105,28 @@ continues from Cyrillic's extracted `.lstm` with `--old_traineddata` so the
 output layer is rebuilt against the clean CU unicharset, and its watchdog
 aborts+retries automatically if a run collapses anyway.
 
+## Model garbles even a *real* line, but structure is preserved
+
+If word count, comma and accent positions are right and some substrings are
+correct, the network is decoding but there's a mismatch or a domain gap:
+
+- **Test the decisive case:** OCR a clean line straight from `data/cu-ground-truth`.
+  - Garbled too → the deployed traineddata doesn't match the trained network
+    (unicharset/recoder mismatch, usually from retraining on a changed charset
+    without `clean-output`). Rebuild clean.
+  - Reads fine → the model is healthy; the real-scan failure is a **domain gap**
+    (image appearance + typeface). Binarize the scans and fine-tune on real lines.
+- Also rule out a stale install: `--tessdata-dir model` to force *this* model.
+
+## `make training` looks stuck in a loop generating `.box` files
+
+Not a loop — it's the one-time box→lstmf preprocessing, one subprocess per file,
+over ~200k pairs. The filename index climbing proves progress
+(`watch 'find data/cu-ground-truth -name "*.box" | wc -l'`). Run with
+`-j$(nproc)` to parallelize; boxes are `.PRECIOUS` so it resumes. If the count
+does *not* climb or the same file rebuilds every run, suspect filesystem clock
+skew (network mounts) — keep the ground truth on a local disk.
+
 ## ъ/ѣ, ж/ѧ and similar minimal-pair confusions
 
 The distinguishing stroke (yat's crossbar, the yus bowl) is exactly what a
@@ -103,5 +141,10 @@ Hundreds of thousands of files overflow `*` globs and `ls`. Use
 
 ## `cu_eval.py` shows no change after retraining
 
-OCR is cached per line as `.hyp.txt`. Pass `--reocr` to re-run the new model;
-otherwise you re-score the old outputs.
+OCR is cached per line as `.hyp.txt`. The tool auto-detects a cache older than
+the current model file and re-OCRs it, printing how many it refreshed — so
+this should now self-correct. It can only compare timestamps when it can find
+the model file, though: if you ran with a bare `--model` and no
+`--tessdata-dir` (relying on `TESSDATA_PREFIX`), it can't locate the file and
+warns instead of silently trusting the cache — pass `--reocr` explicitly in
+that case, or just always pass `--tessdata-dir` so the check can run.

@@ -103,6 +103,20 @@ def find_image(stem_path: Path):
     return None
 
 
+def model_path(tessdata_dir: str, model: str) -> Path | None:
+    """Best-effort path to the .traineddata actually used, for staleness checks."""
+    if tessdata_dir:
+        p = Path(tessdata_dir) / f"{model}.traineddata"
+        return p if p.exists() else None
+    for env in ("TESSDATA_PREFIX",):
+        import os
+        if os.environ.get(env):
+            p = Path(os.environ[env]) / f"{model}.traineddata"
+            if p.exists():
+                return p
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -112,6 +126,11 @@ def main():
     ap.add_argument("--tessdata-dir", default="", help="custom tessdata dir")
     ap.add_argument("--reocr", action="store_true", help="ignore cached .hyp.txt")
     ap.add_argument("--top", type=int, default=60, help="worst-N lines in the HTML")
+    ap.add_argument("--split-chars", default="~\u203F",
+                    help="chars that mark a line as belonging to a special "
+                         "construct (default: melisma dividers ~ and undertie); "
+                         "reports CER separately for lines containing any of "
+                         "them vs. the rest. Empty string disables the split.")
     ap.add_argument("--report", default="report.html")
     ap.add_argument("--tsv", default="metrics.tsv")
     args = ap.parse_args()
@@ -119,6 +138,16 @@ def main():
     gts = sorted(args.dir.rglob("*.gt.txt"))
     if not gts:
         sys.exit(f"no *.gt.txt under {args.dir}")
+
+    mpath = model_path(args.tessdata_dir, args.model)
+    if mpath is None and not args.reocr:
+        print(f"  NOTE: couldn't locate {args.model}.traineddata under "
+              f"'{args.tessdata_dir or '(default tessdata dir)'}' to check cache "
+              "staleness -- pass --reocr if you've retrained since the last eval "
+              "run, or cached .hyp.txt may silently score an older model.",
+              file=sys.stderr)
+    model_mtime = mpath.stat().st_mtime if mpath else None
+    stale_found = 0
 
     rows = []
     tot = dict(cd=0, cn=0, wd=0, wn=0, scd=0, scn=0)  # char/word dist & counts, full & stripped
@@ -134,7 +163,11 @@ def main():
             continue
 
         hyp_cache = img.with_suffix(img.suffix + ".hyp.txt")
-        if hyp_cache.exists() and not args.reocr:
+        cache_stale = (model_mtime is not None and hyp_cache.exists()
+                       and hyp_cache.stat().st_mtime < model_mtime)
+        if cache_stale:
+            stale_found += 1
+        if hyp_cache.exists() and not args.reocr and not cache_stale:
             hyp = hyp_cache.read_text(encoding="utf-8").strip()
         else:
             hyp = ocr(img, args.model, args.psm, args.tessdata_dir).strip()
@@ -177,6 +210,34 @@ def main():
         print(f"\n  NOTE: {identical} line(s) had OCR == reference exactly. If you did "
               f"not verify\n        those against the image, they may be uncorrected "
               f"and bias CER down.")
+    if stale_found:
+        print(f"\n  NOTE: {stale_found} cached .hyp.txt predated {args.model}.traineddata "
+              f"and were\n        automatically re-OCR'd. Scores reflect the CURRENT model.")
+
+    if args.split_chars:
+        marked, rest = [], []
+        for r in rows:
+            (marked if any(c in r["ref"] for c in args.split_chars) else rest).append(r)
+        if marked and rest:
+            def group_cer(group):
+                cd = sum(levenshtein(r["ref"], r["hyp"]) for r in group)
+                cn = sum(len(r["ref"]) for r in group)
+                return micro(cd, cn), cn
+            mc, mn = group_cer(marked)
+            rc, rn = group_cer(rest)
+            shown = " ".join(repr(c) for c in args.split_chars)
+            print(f"\n  ── split by construct ({shown}) ──")
+            print(f"  lines with marker: {len(marked):4d}  ({mn:5d} chars)  "
+                  f"CER {mc:6.2f}%")
+            print(f"  other lines      : {len(rest):4d}  ({rn:5d} chars)  "
+                  f"CER {rc:6.2f}%")
+            # share of TOTAL error mass contributed by the marked group
+            total_err = sum(levenshtein(r["ref"], r["hyp"]) for r in rows)
+            marked_err = sum(levenshtein(r["ref"], r["hyp"]) for r in marked)
+            if total_err:
+                print(f"  marked lines account for {marked_err/total_err*100:5.1f}% "
+                      f"of total edit-distance error, from {mn/tot['cn']*100:.1f}% "
+                      f"of reference characters.")
 
     print(f"\n  worst lines:")
     for r in rows[:10]:
