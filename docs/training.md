@@ -96,6 +96,16 @@ make -C $TESSTRAIN training MODEL_NAME=cu START_MODEL=cu \
   DATA_DIR=$PWD/training GROUND_TRUTH_DIR=$PWD/data/cu-ground-truth \
   TESSDATA=$PWD/training \
   MAX_ITERATIONS=<a few thousand>
+
+# REQUIRED — `training` only writes checkpoints; it does not package a usable
+# .traineddata, and nothing above touches model/. Skipping this step means
+# any eval against --tessdata-dir model silently scores the OLD (pre-fine-tune)
+# model, with no error or warning anywhere.
+lstmtraining --stop_training \
+  --continue_from training/cu/checkpoints/cu_checkpoint \
+  --traineddata training/cu/cu.traineddata \
+  --model_output training/cu.traineddata
+cp training/cu.traineddata model/cu.traineddata
 ```
 
 `TESSDATA` must be passed explicitly here. tesstrain unpacks `START_MODEL` with

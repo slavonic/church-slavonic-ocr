@@ -126,11 +126,14 @@ def main():
     ap.add_argument("--tessdata-dir", default="", help="custom tessdata dir")
     ap.add_argument("--reocr", action="store_true", help="ignore cached .hyp.txt")
     ap.add_argument("--top", type=int, default=60, help="worst-N lines in the HTML")
-    ap.add_argument("--split-chars", default="~\u203F",
-                    help="chars that mark a line as belonging to a special "
-                         "construct (default: melisma dividers ~ and undertie); "
-                         "reports CER separately for lines containing any of "
-                         "them vs. the rest. Empty string disables the split.")
+    ap.add_argument("--split", action="append", metavar="NAME=CHARS",
+                    default=None,
+                    help="report CER for lines containing any of CHARS as a "
+                         "named bucket, vs. the rest. Repeatable for several "
+                         "buckets (checked in order given; a line lands in "
+                         "the first bucket it matches). Default: "
+                         "'melisma=~\u203F' 'numerals=0123456789'. "
+                         "Pass --split '' to disable.")
     ap.add_argument("--report", default="report.html")
     ap.add_argument("--tsv", default="metrics.tsv")
     args = ap.parse_args()
@@ -214,30 +217,44 @@ def main():
         print(f"\n  NOTE: {stale_found} cached .hyp.txt predated {args.model}.traineddata "
               f"and were\n        automatically re-OCR'd. Scores reflect the CURRENT model.")
 
-    if args.split_chars:
-        marked, rest = [], []
-        for r in rows:
-            (marked if any(c in r["ref"] for c in args.split_chars) else rest).append(r)
-        if marked and rest:
-            def group_cer(group):
-                cd = sum(levenshtein(r["ref"], r["hyp"]) for r in group)
-                cn = sum(len(r["ref"]) for r in group)
-                return micro(cd, cn), cn
-            mc, mn = group_cer(marked)
-            rc, rn = group_cer(rest)
-            shown = " ".join(repr(c) for c in args.split_chars)
-            print(f"\n  ── split by construct ({shown}) ──")
-            print(f"  lines with marker: {len(marked):4d}  ({mn:5d} chars)  "
-                  f"CER {mc:6.2f}%")
-            print(f"  other lines      : {len(rest):4d}  ({rn:5d} chars)  "
-                  f"CER {rc:6.2f}%")
-            # share of TOTAL error mass contributed by the marked group
-            total_err = sum(levenshtein(r["ref"], r["hyp"]) for r in rows)
-            marked_err = sum(levenshtein(r["ref"], r["hyp"]) for r in marked)
+    splits = (["melisma=~\u203F", "numerals=0123456789"]
+              if args.split is None else [s for s in args.split if s])
+    if splits:
+        def cer_of(group):
+            cd = sum(levenshtein(r["ref"], r["hyp"]) for r in group)
+            cn = sum(len(r["ref"]) for r in group)
+            return micro(cd, cn), cn, cd
+
+        buckets = []
+        for spec in splits:
+            name, _, chars = spec.partition("=")
+            if not chars:
+                sys.exit(f"--split expects NAME=CHARS, got {spec!r}")
+            buckets.append((name, chars))
+
+        remaining = list(rows)
+        total_err = sum(levenshtein(r["ref"], r["hyp"]) for r in rows)
+        print(f"\n  ── split by construct ──")
+        any_matched = False
+        for name, chars in buckets:
+            matched, unmatched = [], []
+            for r in remaining:
+                (matched if any(c in r["ref"] for c in chars) else unmatched).append(r)
+            remaining = unmatched
+            if not matched:
+                continue
+            any_matched = True
+            c, n, d = cer_of(matched)
+            shown = " ".join(repr(ch) for ch in chars)
+            print(f"  {name:<10s}: {len(matched):4d} lines  ({n:5d} chars)  "
+                  f"CER {c:6.2f}%   [{shown}]")
             if total_err:
-                print(f"  marked lines account for {marked_err/total_err*100:5.1f}% "
-                      f"of total edit-distance error, from {mn/tot['cn']*100:.1f}% "
-                      f"of reference characters.")
+                print(f"  {'':<10s}  {d/total_err*100:5.1f}% of total error, from "
+                      f"{n/tot['cn']*100:.1f}% of reference characters")
+        if any_matched and remaining:
+            c, n, d = cer_of(remaining)
+            print(f"  {'other':<10s}: {len(remaining):4d} lines  ({n:5d} chars)  "
+                  f"CER {c:6.2f}%")
 
     print(f"\n  worst lines:")
     for r in rows[:10]:

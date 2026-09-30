@@ -37,6 +37,46 @@ an **image-quality / segmentation** problem, not the model.
   despeckle, suppress show-through, and segment with `--psm 4`. Quick test:
   `convert page.png -colorspace Gray -lat 25x25+10% -despeckle /tmp/bw.png`.
 
+## Eval doesn't move at all after fine-tuning, and errors look like the charset never changed (e.g. a fine-tune-only character never once appears in output)
+
+Check whether the fine-tuned model was ever actually **packaged and deployed**
+before assuming anything about the model itself. tesstrain's `training` target
+only writes checkpoint files (`training/<model>/checkpoints/`); it does not
+produce a usable `.traineddata`, and nothing in the plain fine-tune recipe
+copies a result into `model/`. If eval reads `--tessdata-dir model`, it will
+silently keep scoring whatever was there before — typically the pre-fine-tune
+model from `make train-seeded` — with no error, and `--reocr` won't help
+because the model *file* genuinely hasn't changed. Confirm with
+`ls -la model/cu.traineddata training/cu/checkpoints/` — if the checkpoints
+are newer than the deployed traineddata, that's it. Fix: package the
+checkpoint and copy it over (see the end of the fine-tuning section in
+`docs/training.md`) before re-evaluating.
+
+## Ordinary text in a line reads well, then a number at the end explodes into garbage
+
+Symptom: a line's main text decodes nearly perfectly, then a trailing number
+— a page marker, verse number, or Cyrillic letter-numeral like `г҃` — turns
+into unrelated symbol garbage, often after a noticeably wide gap in the
+reference text (`Послѣ́дованїе ѡ҆ и҆сповѣ́данїи 73` → correct text, then `73`
+becomes `:с:с:с::с:стз`).
+
+The wide gap is the tell: that number is very likely a distinct typographic
+zone — a running header or verse marker — that `extract_lines.py`'s
+segmentation is incidentally sweeping into the main text-line crop. Numbering
+apparatus is a small fraction of continuous liturgical prose, so it's
+plausibly just undertrained relative to running text — structurally the same
+shape of problem as the melisma-marker case above (a construct that's rare in
+the training distribution, failing much harder than its rarity alone would
+predict). Quantify it with `cu_eval.py`'s built-in `numerals` bucket
+(`docs/evaluation.md`) before deciding it's worth chasing — check whether it
+carries a disproportionate share of total error the same way melisma did.
+
+If it does: check the crops in `report.html` first, to confirm these really
+are separate zones rather than ordinary in-line numerals. If confirmed, either
+crop tighter to exclude the marginal number, or make sure enough
+number-containing real lines are in `data/real-lines/finetune/` for the model
+to actually learn that register.
+
 ## A character introduced only in fine-tune data gets consistently misread as a similar-looking existing character
 
 Symptom: a mark that appears **only** in your hand-corrected real lines (never

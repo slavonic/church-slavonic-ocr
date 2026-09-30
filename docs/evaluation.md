@@ -49,14 +49,19 @@ Outputs a per-line `metrics.tsv` sorted worst-first and a self-contained
 `report.html` with each crop, its reference, the OCR, and a character diff — read
 this to spot systematic swaps.
 
-By default the console summary also splits CER by whether a line contains a
-melisma divider (`~` or `‿`), since that construct has its own training
-history (see `docs/troubleshooting.md`) and is worth isolating: it reports how
-many reference characters live in marked vs. unmarked lines and what fraction
-of *total edit-distance error* the marked lines account for — a precise
-answer to "how much of my CER is the melisma problem" rather than eyeballing
-the worst-line list. `--split-chars ''` disables it; pass different characters
-to isolate any other construct the same way.
+By default the console summary also splits CER into named buckets by
+construct — **melisma** (`~`/`‿`) and **numerals** (`0`-`9`) — since both have
+turned out to need separate diagnosis (see `docs/troubleshooting.md`): each
+reports lines, characters, its own CER, and what fraction of *total
+edit-distance error* it accounts for, against how big a fraction of the text
+it actually is. That last ratio is the point — it's a precise answer to "how
+much of my CER is construct X" rather than eyeballing the worst-line list, and
+it's what showed melisma lines carrying ~25% of total error from under 8% of
+the characters even as the aggregate CER improved.
+
+Pass `--split 'name=chars'` (repeatable) to define your own buckets instead —
+a line lands in the first bucket it matches, checked in the order given, and
+whatever's left becomes "other". `--split ''` disables the whole feature.
 
 Caveats:
 
