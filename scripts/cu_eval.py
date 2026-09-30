@@ -22,6 +22,7 @@ otherwise (no numpy/Pillow needed).
 import argparse
 import base64
 import html
+import re
 import subprocess
 import sys
 import unicodedata
@@ -117,6 +118,18 @@ def model_path(tessdata_dir: str, model: str) -> Path | None:
     return None
 
 
+BOOK_RE = re.compile(r"_p\d+_l\d+$")
+
+def book_tag(gt_path: Path) -> str:
+    """<book>_p<pg>_l<ln>.gt.txt -> <book>, matching extract_lines.py's naming.
+    Anything that doesn't fit the convention is grouped separately rather than
+    silently mis-tagged, so a naming outlier shows up instead of hiding."""
+    stem = gt_path.name[: -len(".gt.txt")] if gt_path.name.endswith(".gt.txt") \
+        else gt_path.stem
+    m = BOOK_RE.search(stem)
+    return stem[: m.start()] if m else "(unrecognized filename pattern)"
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -126,6 +139,14 @@ def main():
     ap.add_argument("--tessdata-dir", default="", help="custom tessdata dir")
     ap.add_argument("--reocr", action="store_true", help="ignore cached .hyp.txt")
     ap.add_argument("--top", type=int, default=60, help="worst-N lines in the HTML")
+    ap.add_argument("--by-book", dest="by_book", action="store_true", default=True,
+                    help="report CER per source book, derived from each "
+                         "<book>_p<pg>_l<ln>.gt.txt filename (default: on). "
+                         "Lets you tell whether error is concentrated in "
+                         "specific books (a data-volume problem) or spread "
+                         "evenly across all of them (points elsewhere, e.g. "
+                         "scan preprocessing).")
+    ap.add_argument("--no-by-book", dest="by_book", action="store_false")
     ap.add_argument("--split", action="append", metavar="NAME=CHARS",
                     default=None,
                     help="report CER for lines containing any of CHARS as a "
@@ -192,7 +213,7 @@ def main():
         tot["scd"] += scd; tot["scn"] += len(ref_s)
 
         rows.append(dict(img=img, ref=ref, hyp=hyp, cer=cer, wer=wer,
-                         cer_s=cer_s, nchar=len(ref)))
+                         cer_s=cer_s, nchar=len(ref), book=book_tag(gt)))
 
     if not rows:
         sys.exit("no scorable pairs found.")
@@ -255,6 +276,24 @@ def main():
             c, n, d = cer_of(remaining)
             print(f"  {'other':<10s}: {len(remaining):4d} lines  ({n:5d} chars)  "
                   f"CER {c:6.2f}%")
+
+    if args.by_book:
+        by_book = {}
+        for r in rows:
+            by_book.setdefault(r["book"], []).append(r)
+        if len(by_book) > 1:
+            def cer_of(group):
+                cd = sum(levenshtein(r["ref"], r["hyp"]) for r in group)
+                cn = sum(len(r["ref"]) for r in group)
+                return micro(cd, cn), cn
+            ranked = sorted(by_book.items(),
+                            key=lambda kv: cer_of(kv[1])[0], reverse=True)
+            name_w = max(len(name) for name, _ in ranked)
+            print(f"\n  ── by book ──")
+            for name, group in ranked:
+                c, n = cer_of(group)
+                print(f"  {name:<{name_w}s} : {len(group):4d} lines  "
+                      f"({n:5d} chars)  CER {c:6.2f}%")
 
     print(f"\n  worst lines:")
     for r in rows[:10]:

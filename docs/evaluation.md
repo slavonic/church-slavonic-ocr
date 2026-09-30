@@ -49,6 +49,17 @@ Outputs a per-line `metrics.tsv` sorted worst-first and a self-contained
 `report.html` with each crop, its reference, the OCR, and a character diff — read
 this to spot systematic swaps.
 
+The console summary also breaks CER down **per source book** by default,
+derived from each file's `<book>_p<pg>_l<ln>.gt.txt` name (the convention
+`extract_lines.py` writes), sorted worst-first. This is what tells you whether
+error is *concentrated* in specific books — usually a data-volume question for
+that book, or a typeface it doesn't share with anything else — versus spread
+evenly across all of them, which points at something book-independent (scan
+preprocessing, for instance, since that would drag down even your
+well-covered books). A filename that doesn't fit the convention is grouped
+under `(unrecognized filename pattern)` rather than silently mis-tagged, so it
+surfaces instead of hiding. Turn it off with `--no-by-book`.
+
 By default the console summary also splits CER into named buckets by
 construct — **melisma** (`~`/`‿`) and **numerals** (`0`-`9`) — since both have
 turned out to need separate diagnosis (see `docs/troubleshooting.md`): each
