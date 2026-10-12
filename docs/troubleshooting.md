@@ -1,261 +1,301 @@
 # Troubleshooting
 
-Symptoms we actually hit, what they mean, and the fix. The recurring lesson:
-**change one thing at a time, and diagnose before rebuilding.**
+Problems we have actually hit, grouped by the [manual](manual.md) step where
+they show up. Find your step, then the symptom that matches.
 
-## Synthetic CER and real CER are not comparable
+Two rules apply throughout:
 
-The BCER printed during training is measured on a validation split of the *same*
-data you trained on. Clean synthetic renders score very low (< 1 %); realistic,
-degraded, hyphenated data scores higher — and a *higher* synthetic BCER on
-harder, more scan-like data can mean a *better* model on real scans. Only compare
-synthetic BCER across runs when the data difficulty is unchanged. The real verdict
-is `cu_eval.py` on held-out real lines. Target there: ≤ 2 % CER.
+- **Change one thing at a time.**
+- **Find out what's wrong before you rebuild anything.**
 
-## Foreign glyphs in the output (schwa, Latin, `©`)
+| Step | Symptom |
+|---|---|
+| [Practice data](#practice-data) (2) | [Shell or file manager freezes on the ground-truth folder](#shell-or-file-manager-freezes-on-the-ground-truth-folder) |
+| [Training](#training) (3) | [Error rate stuck at 98–100% for a long time](#bcer-stuck-at-98100-for-tens-of-thousands-of-iterations) |
+| | [Seems stuck in a loop making `.box` files](#make-training-seems-stuck-making-box-files) |
+| | [Output contains schwa, Latin letters or `©`](#foreign-glyphs-in-the-output-schwa-latin-) |
+| [Collecting real lines](#collecting-real-lines) (4) | [A page reads as long runs of garbage](#a-page-reads-as-long-runs-of-garbage) |
+| [Fine-tuning](#fine-tuning) (6–7) | [`combine_tessdata -u … Error 1`](#combine_tessdata--u--error-1-at-the-start-of-a-fine-tune) |
+| | [Log stops after `Continuing from …`, no error](#fine-tune-log-stops-after-continuing-from--make-reports-no-error) |
+| | [`Code range changed` / `Must supply the old traineddata`](#code-range-changed-from-n-to-m--must-supply-the-old-traineddata-for-code-conversion) |
+| | [Score doesn't change at all after fine-tuning](#score-doesnt-change-at-all-after-fine-tuning) |
+| [Reading the scores](#reading-the-scores) (5, 7) | [Training error is low, but the real score is high](#training-error-and-real-error-dont-match) |
+| | [Score doesn't change after retraining](#cu_evalpy-shows-no-change-after-retraining) |
+| | [The model garbles a real line, but word count and accents are in the right places](#the-model-garbles-a-real-line-but-the-structure-is-right) |
+| | [A number at the end of a line turns into garbage](#a-number-at-the-end-of-a-line-turns-into-garbage) |
+| | [A mark that's only in the real lines is read as a similar mark](#a-mark-thats-only-in-the-real-lines-is-read-as-a-similar-mark) |
+| | [Words come out in all caps or alternating case](#words-come-out-in-all-caps-or-alternating-case) |
+| | [ъ/ѣ, ж/ѧ and similar pairs are confused](#ъѣ-жѧ-and-similar-pairs-are-confused) |
 
-The model can only emit classes in its unicharset. Foreign glyphs mean either
-(a) the charset was contaminated by junk in the ground truth, or (b) a stale
-Cyrillic-derived charset survived a supposedly from-scratch run.
+---
 
-- Confirm which: `head -1 training/cu/unicharset` (~200–300 = clean CU;
-  thousands = stale) and grep it for Latin/schwa.
-- Fix (a): clean the corpus (the generator now strips links/URLs/editorial
-  markup and allow-set-filters the rest — `docs/data-generation.md`) and rebuild.
-- Fix (b): `make clean-output` + remove the traineddata, then retrain. A changed
-  allow-set (adding digits, `_`) **requires** this rebuild.
+## Practice data
 
-## Long runs of garbage: `ЩщОощеҹоҹҹ…` where short text should be
+### Shell or file manager freezes on the ground-truth folder
 
-The recognizer is reading **noise**, not text — doubled superscripts and stacked
-accents are the diacritic band of a neighbouring line plus scan speckle. This is
-an **image-quality / segmentation** problem, not the model.
+**Cause:** `data/cu-ground-truth/` holds hundreds of thousands of files, which is
+too many for `*` globs, `ls` or a file manager.
 
-- Prove it: OCR one *clean* line crop with `--psm 13`. If it reads fine, the
-  model is healthy and the page path is at fault.
-- Fix: binarize before OCR (Sauvola handles uneven historical paper), deskew,
-  despeckle, suppress show-through, and segment with `--psm 4`. Quick test:
-  `convert page.png -colorspace Gray -lat 25x25+10% -despeckle /tmp/bw.png`.
+**Fix:** look at samples with `make review` (or
+`python3 scripts/review_samples.py data/cu-ground-truth --n 8`), which never
+lists the whole folder. To count or process files, use
+`find data/cu-ground-truth -name '*.gt.txt' | wc -l`, or `find … -exec … {} +`.
 
-## Eval doesn't move at all after fine-tuning, and errors look like the charset never changed (e.g. a fine-tune-only character never once appears in output)
+---
 
-Check whether the fine-tuned model was ever actually **packaged and deployed**
-before assuming anything about the model itself. tesstrain's `training` target
-only writes checkpoint files (`training/<model>/checkpoints/`); it does not
-produce a usable `.traineddata`, and nothing in the plain fine-tune recipe
-copies a result into `model/`. If eval reads `--tessdata-dir model`, it will
-silently keep scoring whatever was there before — typically the pre-fine-tune
-model from `make train-seeded` — with no error, and `--reocr` won't help
-because the model *file* genuinely hasn't changed. Confirm with
-`ls -la model/cu.traineddata training/cu/checkpoints/` — if the checkpoints
-are newer than the deployed traineddata, that's it. Fix: package the
-checkpoint under its own name and evaluate that file with `--model <name>
---tessdata-dir training` (see "Package and evaluate" in `docs/training.md`)
-before copying it into `model/`.
+## Training
 
-## Ordinary text in a line reads well, then a number at the end explodes into garbage
+### BCER stuck at 98–100% for tens of thousands of iterations
 
-Symptom: a line's main text decodes nearly perfectly, then a trailing number
-(a page marker, verse number, or Cyrillic letter-numeral like `г҃`) turns into
-unrelated symbol garbage, often after a noticeably wide gap in the reference
-text (`Послѣ́дованїе ѡ҆ и҆сповѣ́данїи 73` → correct text, then `73` becomes
-`:с:с:с::с:стз`).
+**Symptom:** a from-scratch run (`make train`) shows `BCER train` around
+97–100%, barely moving; `BWER` around 100%; `mean rms` low (around 6%). Reading
+a training image with the current checkpoint gives empty output or the same
+short string (such as `п҆ъ`) whatever the image.
 
-**Measure before chasing it.** A few striking lines in the worst-lines list
-are not a pattern. `cu_eval.py`'s `numerals` bucket (`docs/evaluation.md`)
-reports how many lines and characters actually contain Arabic digits and what
-share of total error they carry. In this project's eval set that bucket was a
-single line, 0.3% of reference characters and 1.5% of total error, so the
-worst-list impression was misleading and there was nothing to fix. Cyrillic
-letter-numerals are not counted by that bucket, and a "contains titlo" bucket
-would not isolate them either, since the titlo also marks ordinary
-abbreviations like `бг҃ъ`.
+**Cause:** CTC collapse. The network outputs "nothing here" almost everywhere
+and has settled there. More iterations won't get it out, and restarting
+unchanged just takes another random chance.
 
-If the bucket does turn out to carry a disproportionate share, a wide gap
-before the number suggests a distinct typographic zone (a running header or
-verse marker) that `extract_lines.py`'s segmentation sweeps into the
-main-text crop. Check the crops in `report.html` to confirm. Then either exclude
-the marginal number by re-extracting with `--margin` (see
-`docs/evaluation.md`), or add enough number-containing real
-lines to `data/real-lines/finetune/` for the model to learn that register.
+**Fix:** use `make train-seeded` ([training.md](training.md#recommended-seeded-training-make-train-seeded)).
+It starts from Cyrillic's trained feature layers instead of random ones, and
+its watchdog stops and retries a run that collapses anyway. Don't use
+tesstrain's `START_MODEL=Cyrillic` instead: that merges Cyrillic's character
+list (Latin, schwa, …) into yours.
 
-## A mark that appears only in the fine-tune data is misread as a similar-looking mark
+### `make training` seems stuck making `.box` files
 
-Symptom: a mark that occurs only in your hand-corrected real lines (never in
-the synthetic corpus) comes out as a different mark that *was* in the synthetic
-data, almost every time, while ordinary text in the same lines reads fine. The
-case we hit: a syllable divider labeled `~` in real chant lyrics, read back as
-`_` (the hyphenation token) or as stray dashes and spaces.
+**Cause:** not a loop. This is the one-time conversion of every training pair,
+one program run per file, over around 200,000 files.
 
-First decide which of two causes you have; they need opposite fixes.
+**Fix:** check it's progressing:
+`watch 'find data/cu-ground-truth -name "*.box" | wc -l'`. The count should
+climb. Run with `-j$(nproc)` (the `make` targets already do this) to use every
+CPU core. If you interrupt it, it carries on from where it stopped next time. If
+the count doesn't climb, or the same files are rebuilt every run, suspect
+clock skew on a network drive: keep the ground truth on a local disk.
 
-**A. Two labels for one image.** If the printed marks are visually the same
-(a syllable dash and a line-end hyphen are both just a short dash), the model
-is being trained on contradictory pairs: the same pixels labeled `_` in the
-synthetic data and `~` in the real data. Nothing visual separates them, so
-more data and more iterations cannot fix it. Fix the labels: use **one token**
-for marks that look alike. This project uses `_` for both (see
-`data/README.md`); position already tells you which is which (line-final =
-hyphenation, mid-line = syllable boundary), so nothing is lost.
+### Foreign glyphs in the output (schwa, Latin, `©`)
 
-**B. A genuinely distinct mark that is just rare.** `merge_unicharsets` adds a
-character that exists only in the fine-tune data as a new output class with
-random initial weights, competing against classes with tens of thousands of
-iterations behind them. If the mark really does look different, the fix is
-exposure: more real lines containing it in `data/real-lines/finetune/`, and
-more fine-tune iterations (a cold class needs materially more than a warm one).
+**Cause:** the model can only output characters in its character list (its
+*unicharset*). Foreign ones mean either:
 
-Test for A before spending effort on B: open a few misread crops in
-`report.html` and ask whether you could tell the mark from its confusion
-partner by eye. Quantify the damage first with `cu_eval.py`'s per-construct
-split (`docs/evaluation.md`).
+- **(a)** junk characters in the practice data put them there, or
+- **(b)** an old Cyrillic-based character list survived what was meant to be a
+  fresh run.
 
-Even after the labels agree, lines with mid-word dividers can stay weak: the
-synthetic corpus never contains a divider inside a word, so letters next to it
-are unfamiliar. If that persists, render syllabified corpus text with a drawn
-dash as the divider.
+**Find out which:** `head -1 training/cu/unicharset`. Around 200–300 is a clean
+Church Slavonic list; thousands means (b). Search the file for Latin letters or
+schwa.
 
-## Words come out flipped to full caps or alternating case, otherwise legible
+**Fix (a):** check the cleaning report printed by `make dataset`
+([data-generation.md](data-generation.md#cleaning-and-the-character-set)), fix
+the cause, and rebuild the data.
 
-Symptom: an isolated word decodes with mostly-correct letters but wrong case
-throughout (`Сла́ва,` → `СѧЛА́ВАѧ`), rather than scattered single-letter errors.
+**Fix (b):** reset the character list
+([training.md, Resetting the charset](training.md#resetting-the-charset)) and
+retrain. Changing the allowed characters (adding digits, `_`, …) **always**
+needs this reset.
 
-This is structured, not random — check the actual crop in `report.html`
-before assuming it's a model defect. Liturgical books often set incipits,
-exclamations (`Сла́ва`, `Ны́нѣ`), or headings in versals/rubricated display
-capitals, a typographic register your synthetic corpus likely never renders
-(plain body-text weight only). If the crop confirms decorative/enlarged caps,
-this is a domain gap like any other: either normalize how such words are
-transcribed, or add examples of that register to training. If the crop is
-ordinary lowercase print, it's a genuine — and separate — model confusion.
+---
 
-## `combine_tessdata -u … Error 1` when fine-tuning (`START_MODEL=cu`)
+## Collecting real lines
 
-The line right before the `Error 1` names the command that failed — it's
-tesstrain unpacking `START_MODEL` via `combine_tessdata -u
-$(TESSDATA)/$(START_MODEL).traineddata …`. If `TESSDATA` wasn't passed on the
-command line, it defaults to a `usr/share/tessdata/` folder next to
-`DATA_DIR` — a path this repo never creates, so the file it's looking for
-doesn't exist. Fix: pass `TESSDATA=$PWD/training` (or `$PWD/model`) explicitly
-— see `docs/training.md`'s fine-tune section. This is specific to the plain
-`START_MODEL=` fine-tune path; `train_seeded.py` never hits it, since it
-extracts and continues from the seed model directly rather than going through
-tesstrain's own `START_MODEL` lookup.
+### A page reads as long runs of garbage
 
-## `Code range changed from N to M!` / `Must supply the old traineddata for code conversion!`
+**Symptom:** where a short line of text should be, the output is a long run
+like `ЩщОощеҹоҹҹ…`.
 
-`N` and `M` are the number of output classes. The message appears in two very
-different places.
+**Cause:** the model is reading **noise**, not text. The doubled superscripts
+and stacked accents are the mark area of the next line plus scan specks. The
+problem is the image or how the page was cut into lines, not the model.
 
-*At the start of a fine-tune,* right after a line naming
-`…/checkpoints/<name>_checkpoint`: `lstmtraining` first tries to resume from a
-checkpoint already sitting in the output directory, rejects it because the
-class count changed, and falls back to `--continue_from`. By itself this is
-harmless, but it tells you the `MODEL_NAME` was reused and an old run's
-checkpoint is still there. Use a fresh name per run (`docs/training.md`, rule 1).
+**Prove it:** OCR one clean line crop with `--psm 13`. If that reads well, the
+model is fine.
 
-*At `lstmtraining --stop_training`, ending in `Failed to read continue from`:*
-fatal. The checkpoint and the proto `--traineddata` you passed describe
-networks with different class counts, so the unicharset you supplied is not the
-one the checkpoint was trained against. The usual cause is a checkpoint that is
-**older than the proto**: the proto was rebuilt after the ground truth changed
-(a relabel, a dropped character), and the training run that should have
-produced a matching checkpoint never ran or never finished. Confirm with
-`ls -l --time-style=full-iso` on both files, and check whether anything in
-`checkpoints/` is newer than the proto.
+**Fix:** re-extract with `--deskew --binarize --psm 4`, and `--margin` if there
+are page edges or margin notes
+([evaluation.md](evaluation.md#1-extract-real-lines--extract_linespy)).
 
-Do not silence it with `--old_traineddata`. That makes the command succeed by
-converting the *old* checkpoint's weights to the new charset, so you deploy the
-previous model under a fresh timestamp and the next eval looks like the change
-did nothing. Fix it by getting a new run to finish, under a new `MODEL_NAME`.
+---
 
-## Fine-tune log stops after `Continuing from …`; `make` reports no error
+## Fine-tuning
 
-Symptom: `finetune.log` ends right after the network summary and
-`Continuing from …/<name>.lstm`, followed by `make: Leaving directory`, with no
-`At iteration …` lines and no `Error`. No new checkpoint is ever written.
+Most of these come from breaking one of the
+[fine-tune rules](training.md#rules-that-keep-a-fine-tune-from-breaking). The
+quickest fix is usually the same: freeze the start model under its own name,
+pick a new `MODEL_NAME`, and run again ([manual, Step 6](manual.md#step-6-fine-tune-on-the-real-lines)).
 
-Two things combine here.
+### `combine_tessdata -u … Error 1` at the start of a fine-tune
 
-- **`make` cannot see the failure.** tesstrain runs
-  `lstmtraining … 2>&1 | tee -a training.log`. A pipeline's exit status is that
-  of its last command, so a crashed `lstmtraining` looks like success. Treat
-  `At iteration` lines as the only proof of training. To see the real exit
-  status and any crash text, run the `lstmtraining` command printed at the top
-  of the log by hand, without the `| tee`, and check `echo $?`.
-- **The start-model files are probably inconsistent.** `--continue_from`
-  loads weights from `<MODEL_NAME>/<name>.lstm`, which tesstrain extracts from
-  the start model only if it is missing or out of date, so a file left over
-  from an earlier run is reused. `--old_traineddata` reads the class map from
-  `<TESSDATA>/<START_MODEL>.traineddata`, which may have since been
-  overwritten by a packaging step. The network summary in the log shows which
-  weights actually loaded: `Fc<N>` is that model's output width, and
+**Cause:** tesstrain unpacks the start model from
+`$(TESSDATA)/$(START_MODEL).traineddata`. If you don't pass `TESSDATA`, it
+looks in a `usr/share/tessdata/` folder next to `DATA_DIR`, which this project
+never creates, so the file isn't found.
+
+**Fix:** pass `TESSDATA=$PWD/training` (or `$PWD/model`) on the command line, as
+in [the manual](manual.md#step-6-fine-tune-on-the-real-lines). `make train-seeded`
+never hits this error.
+
+### Fine-tune log stops after `Continuing from …`; `make` reports no error
+
+**Symptom:** `finetune.log` ends right after the network summary and
+`Continuing from …/<name>.lstm`, then `make: Leaving directory`. There are no
+`At iteration` lines and no `Error`, and no new checkpoint is written.
+
+**Two causes together:**
+
+- **`make` can't see the failure.** tesstrain runs `lstmtraining … | tee`, and
+  `make` only sees `tee`'s result, so a crashed `lstmtraining` looks like
+  success. Only `At iteration` lines prove it trained. To see the real error,
+  run the `lstmtraining` command from the top of the log yourself, without
+  `| tee`, then `echo $?`.
+- **The start-model files don't match.** The weights come from
+  `training/<MODEL_NAME>/<START_MODEL>.lstm`, which is reused if left over from
+  an earlier run. The character map comes from
+  `training/<START_MODEL>.traineddata`, which may since have been overwritten by
+  packaging. In the log, `Fc<N>` is the loaded network's output width, and
   `Code range changed from <N> to <M>` should start from the class count of the
-  model you meant to continue from. If `N` is the wrong model's width, the
-  files are mixed.
+  model you meant. A wrong `N` means mixed files.
 
-Fix: freeze the intended start model as its own file, pick a fresh
-`MODEL_NAME`, and rerun (`docs/training.md`, "Fine-tuning on real lines"). That
-leaves no stale `.lstm`, checkpoint or proto for the run to pick up.
+**Fix:** freeze the start model as its own file, choose a new `MODEL_NAME`,
+and rerun.
 
-## BCER pinned ~98–100% after tens of thousands of iterations (from scratch)
+### `Code range changed from N to M!` / `Must supply the old traineddata for code conversion!`
 
-Signature: `BCER train` ≈ 97–100% and moving ~0.02%/100 iters, `BWER` ≈ 100%,
-`mean rms` low (~6%) and slowly falling, `skip ratio` 0 — and decoding a
-training image with the current checkpoint yields empty output or a short
-near-constant stub of high-frequency glyphs (e.g. `п҆ъ`) regardless of the
-input image. That is **CTC collapse**: the net emits blank at almost every
-timestep (plus, at the few committed steps, its highest-prior classes) and is
-stuck in that basin. It will not escape with more iterations; restarting
-unchanged just rerolls the init dice.
+`N` and `M` are numbers of output classes. Where it appears decides whether it
+matters.
 
-Fix: seed the feature layers instead of random init — `make train-seeded`
-(see `docs/training.md`). Do **not** use tesstrain's `START_MODEL=Cyrillic`
-for this, which merges the foreign charset back in; the seeded runner
-continues from Cyrillic's extracted `.lstm` with `--old_traineddata` so the
-output layer is rebuilt against the clean CU unicharset, and its watchdog
-aborts+retries automatically if a run collapses anyway.
+**At the start of a fine-tune**, right after a line naming
+`…/checkpoints/<name>_checkpoint`: harmless in itself. `lstmtraining` found an
+old checkpoint with a different class count, rejected it, and started from the
+start model instead. It does mean you reused a `MODEL_NAME`; use a new one next
+time.
 
-## Model garbles even a *real* line, but structure is preserved
+**At packaging (`lstmtraining --stop_training`), ending in
+`Failed to read continue from`:** fatal. The checkpoint and the `--traineddata`
+you passed have different class counts. Usually the checkpoint is **older than
+the proto `traineddata`**: the proto was rebuilt after the ground truth changed,
+and the run that should have made a matching checkpoint never ran or never
+finished. Check with `ls -l --time-style=full-iso` on both
+([manual, Step 7a](manual.md#step-7-package-the-new-model-and-keep-it-only-if-it-is-better)).
 
-If word count, comma and accent positions are right and some substrings are
-correct, the network is decoding but there's a mismatch or a domain gap:
+**Don't silence it with `--old_traineddata`.** That converts the *old*
+checkpoint to the new character list, so you'd publish the previous model under
+a new date, and the next test would look as if your change did nothing. Fix it
+by getting a new run to finish, under a new `MODEL_NAME`.
 
-- **Test the decisive case:** OCR a clean line straight from `data/cu-ground-truth`.
-  - Garbled too → the deployed traineddata doesn't match the trained network
-    (unicharset/recoder mismatch, usually from retraining on a changed charset
-    without `clean-output`). Rebuild clean.
-  - Reads fine → the model is healthy; the real-scan failure is a **domain gap**
-    (image appearance + typeface). Binarize the scans and fine-tune on real lines.
-- Also rule out a stale install: `--tessdata-dir model` to force *this* model.
+### Score doesn't change at all after fine-tuning
 
-## `make training` looks stuck in a loop generating `.box` files
+**Symptom:** the test score is identical to before, and a character that exists
+only in the fine-tune lines never appears in the output.
 
-Not a loop — it's the one-time box→lstmf preprocessing, one subprocess per file,
-over ~200k pairs. The filename index climbing proves progress
-(`watch 'find data/cu-ground-truth -name "*.box" | wc -l'`). Run with
-`-j$(nproc)` to parallelize; boxes are `.PRECIOUS` so it resumes. If the count
-does *not* climb or the same file rebuilds every run, suspect filesystem clock
-skew (network mounts) — keep the ground truth on a local disk.
+**Cause:** the fine-tuned model was never packaged and installed. tesstrain's
+`training` target only writes checkpoints, and nothing copies a result into
+`model/`. `make eval` then keeps testing the old `model/cu.traineddata`, with
+no error.
 
-## ъ/ѣ, ж/ѧ and similar minimal-pair confusions
+**Check:** `ls -la model/cu.traineddata training/<name>/checkpoints/`. If the
+checkpoints are newer than the model, this is it.
 
-The distinguishing stroke (yat's crossbar, the yus bowl) is exactly what a
-low-quality scan blurs away. Higher DPI + better binarization recover much of it;
-a real-line fine-tune in the target face teaches the rest in context.
+**Fix:** package and test the run by its own name, then copy it into `model/`
+([manual, Step 7](manual.md#step-7-package-the-new-model-and-keep-it-only-if-it-is-better)).
 
-## Shell / file manager chokes on the ground-truth directory
+---
 
-Hundreds of thousands of files overflow `*` globs and `ls`. Use
-`scripts/review_samples.py` (lazy `os.scandir`, never lists everything) or
-`find … -exec … {} +`, and slice a handful with `head` before opening.
+## Reading the scores
 
-## `cu_eval.py` shows no change after retraining
+### Training error and real error don't match
 
-OCR is cached per line as `.hyp.txt`. The tool auto-detects a cache older than
-the current model file and re-OCRs it, printing how many it refreshed — so
-this should now self-correct. It can only compare timestamps when it can find
-the model file, though: if you ran with a bare `--model` and no
-`--tessdata-dir` (relying on `TESSDATA_PREFIX`), it can't locate the file and
-warns instead of silently trusting the cache — pass `--reocr` explicitly in
-that case, or just always pass `--tessdata-dir` so the check can run.
+The `BCER` printed during training is measured on the practice data, which is
+much easier than real scans. Clean practice data scores under 1%. Harder,
+blurred, hyphenated practice data scores higher, and a *higher* training error
+on more realistic data can mean a *better* model on real books. Only compare
+training errors between runs that used the same practice data.
+
+The real verdict is `make eval` on the real test lines
+([manual, Step 5](manual.md#step-5-measure-how-well-the-model-reads)). The goal
+there is 2% CER or less.
+
+### `cu_eval.py` shows no change after retraining
+
+The test caches each model reading as a `.hyp.txt` file and only re-reads lines
+when it can tell the model is newer. When you switch between models, or run
+without `--tessdata-dir`, pass `--reocr`. Details:
+[evaluation.md, Caveats](evaluation.md#caveats).
+
+### The model garbles a real line, but the structure is right
+
+**Symptom:** the word count and the positions of commas and accents are right,
+and parts of words are correct, but much of the text is wrong.
+
+**Test:** OCR a clean line straight from `data/cu-ground-truth`.
+
+- **Garbled too:** the installed model doesn't match the trained network,
+  usually from retraining after changing the allowed characters without a reset.
+  Reset the character list ([training.md](training.md#resetting-the-charset))
+  and rebuild.
+- **Reads fine:** the model is healthy. Real scans just look different from the
+  practice data. Clean the scans up (`--binarize`) and fine-tune on real lines.
+
+Also make sure you're testing the model you think you are: always pass
+`--tessdata-dir`.
+
+### A number at the end of a line turns into garbage
+
+**Symptom:** the line's text reads well, then a trailing page number, verse
+number or letter-numeral (`г҃`) turns into junk, often after a wide gap
+(`…и҆сповѣ́данїи 73` → `…и҆сповѣ́данїи :с:с:с::с:стз`).
+
+**First, measure.** A few striking lines in the worst-lines list aren't a
+pattern. The `numerals` row in `cu_eval.py`'s per-construct breakdown
+([evaluation.md](evaluation.md#per-construct-breakdown)) shows what share of
+the total error comes from lines with digits. In this project's test set it was
+one line and 1.5% of the error, so there was nothing to fix. (Cyrillic
+letter-numerals aren't counted there.)
+
+**If it is a real share:** the wide gap suggests a margin number or running
+header that got cut into the same line. Confirm by looking at the crops in
+`report.html`, then either re-extract with `--margin` to leave it out
+([evaluation.md](evaluation.md#1-extract-real-lines--extract_linespy)), or add
+enough lines with numbers to `finetune/` for the model to learn them.
+
+### A mark that's only in the real lines is read as a similar mark
+
+**Symptom:** a mark that appears in your corrected real lines but never in the
+practice data comes out as a different, similar-looking mark that *is* in the
+practice data. Our case: a syllable dash labeled `~` in chant lyrics was read
+as `_` (the hyphen label) or as stray dashes and spaces.
+
+Look at a few misread crops in `report.html` and ask: **could you tell the two
+marks apart by eye?**
+
+- **No (same mark, two labels):** the model is being taught two answers for the
+  same picture, which it can't learn. Use **one label** for marks that look
+  alike. This project uses `_` for both
+  ([data/README.md](../data/README.md#ground-truth-conventions)).
+- **Yes (a different but rare mark):** a character only in the fine-tune lines
+  starts from nothing, against characters with long training behind them. It
+  needs exposure: more real lines containing it, and more fine-tune iterations.
+
+Even with consistent labels, lines with a dash in the middle of a word can
+stay weak, because the practice data never has one. If so, render syllabified
+corpus text with a drawn dash as the divider.
+
+### Words come out in all caps or alternating case
+
+**Symptom:** a single word has mostly the right letters but the wrong case
+throughout (`Сла́ва,` → `СѧЛА́ВАѧ`).
+
+**Check the crop in `report.html` first.** Liturgical books often print opening
+words, exclamations (`Сла́ва`, `Ны́нѣ`) or headings in large decorative
+capitals, which the practice data never draws. If the crop shows decorative
+capitals, either agree on how to type such words, or add examples of them to
+the fine-tune lines. If the crop shows ordinary lowercase print, it's a real
+model confusion.
+
+### ъ/ѣ, ж/ѧ and similar pairs are confused
+
+The stroke that tells them apart (the yat's crossbar, the yus's bowl) is
+exactly what a poor scan blurs away. A higher `--dpi` and `--binarize` when
+extracting recover much of it; fine-tuning on real lines in that typeface
+teaches the rest.

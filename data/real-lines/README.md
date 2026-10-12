@@ -1,7 +1,8 @@
 # Sources
 
 The book each line crop in `eval/` and `finetune/` was extracted from, keyed by
-the filename stem (`<stem>_p<pg>_l<ln>.png`/`.gt.txt` — see `docs/evaluation.md`
+the filename stem (`<stem>_p<pg>_l<ln>.png`/`.gt.txt` — see
+[manual, Step 4](../../docs/manual.md#step-4-collect-real-lines-from-scanned-books)
 for how these are produced).
 
 | stem | citation | finetune | eval |

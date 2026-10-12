@@ -28,14 +28,12 @@ tesseract line.png stdout --psm 13 -l cu --tessdata-dir /path/to/download-dir
 
 ## Publishing a new model
 
-From a local `make train` (which leaves `model/cu.traineddata` in place):
+Follow [manual, Steps 8 and 9](../docs/manual.md#step-8-fill-in-the-model-card):
+fill in `MODEL_CARD.md`, commit and push it, then
 
 ```bash
 make release VERSION=v1.0        # gh release create v1.0 model/cu.traineddata …
 ```
-
-Update `MODEL_CARD.md` in the same release so metrics and provenance match the
-binary.
 
 ## Also here
 

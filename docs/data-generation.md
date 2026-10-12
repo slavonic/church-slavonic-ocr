@@ -1,10 +1,16 @@
 # Data generation — `cu_make_training_data.py`
 
+Reference for [manual](manual.md) Step 2 (`make dataset`). You only need this
+page to change how the practice data is made.
+
 Turns the Markdown corpus into Tesseract LSTM training pairs: for every line a
 `.gt.txt` (ground truth) and a `.png` (that exact line rendered), one line per
 image so text and image can never drift apart.
 
-Pinned invocation: `scripts/build_dataset.sh` (called by `make dataset`).
+Pinned invocation: [scripts/build_dataset.sh](../scripts/build_dataset.sh)
+(called by `make dataset`). To change a setting for good, edit that file so
+the data stays reproducible. `make dataset LIMIT=N` changes only the line
+count.
 
 ## Rendering
 
@@ -48,8 +54,10 @@ prefer vowel boundaries (syllable-ish).
 
 The ground truth records the mark as `_` (the project convention, which real
 chant-lyric lines also use for syllable dividers, so the model sees one label
-for one printed dash; see `data/README.md`); the rendered
-image shows `--hyphen-glyph` (default `-`). Set the glyph to whatever your target
+for one printed dash; see
+[data/README.md](../data/README.md#ground-truth-conventions)); the rendered
+image shows `--hyphen-glyph` (default `_`, which is also what
+[build_dataset.sh](../scripts/build_dataset.sh) passes). Set the glyph to whatever your target
 books actually print — if that is a distinct mark like the double-oblique `⸗`,
 use a face that contains it (coverage-checked automatically). Note that rendering
 line-breaks as `-` collides with compound hyphens, so the `-`/`_` distinction
@@ -60,7 +68,7 @@ becomes positional; a distinct glyph avoids that.
 `--degrade` applies light skew, blur, and noise so the synthetic images resemble
 real scans. Keep it comparable to your actual scans — degradation harsher than
 reality inflates synthetic error without buying robustness (see
-`docs/troubleshooting.md`). `--seed` makes hyphenation and degradation reproducible.
+[troubleshooting](troubleshooting.md#training-error-and-real-error-dont-match)). `--seed` makes hyphenation and degradation reproducible.
 
 ## Key options
 

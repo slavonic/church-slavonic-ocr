@@ -1,7 +1,7 @@
 # Model card — `cu.traineddata`
 
-_Fill in the bracketed fields at release time; the structure is fixed so
-downstream users know what to expect._
+_Fill in the bracketed fields at release time ([how](../docs/manual.md#step-8-fill-in-the-model-card));
+the structure is fixed so downstream users know what to expect._
 
 ## Overview
 
@@ -18,7 +18,7 @@ downstream users know what to expect._
 - **Source text:** [`slavonic/cu-md-sandbox`](https://github.com/slavonic/cu-md-sandbox)
   at commit [`…`]. Cleaned to a Church-Slavonic character set (letters, combining
   marks, print punctuation, brackets, liturgical symbols, Arabic digits); markup,
-  links, URLs, and editorial apparatus removed. See `docs/data-generation.md`.
+  links, URLs, and editorial apparatus removed. See [data generation](../docs/data-generation.md).
 - **Rendering:** ~[N] distinct lines rendered in [5] typefaces (Ponomar,
   Triodion, Pochaevsk, Acathist, Monomakh) with HarfBuzz shaping, light
   degradation (skew/blur/noise), and hyphenated line-ends injected at rate [0.20].
@@ -30,7 +30,8 @@ downstream users know what to expect._
 ## Metrics
 
 Measured on the held-out **real** eval set (not the synthetic split, which is
-much easier and not comparable across data changes — see `docs/troubleshooting.md`).
+much easier and not comparable across data changes — see
+[troubleshooting](../docs/troubleshooting.md#training-error-and-real-error-dont-match)).
 
 | metric | value |
 |--------|-------|
@@ -56,4 +57,5 @@ single token, `_`. The model does not distinguish the two; position does
 
 ## Reproduction
 
-`make setup && make dataset && make train && make eval` (see `docs/pipeline.md`).
+Follow the [manual](../docs/manual.md): `make setup`, `make dataset`,
+`make train-seeded`, then collect real lines, fine-tune and `make eval`.

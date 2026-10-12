@@ -20,7 +20,7 @@ real scans with a small hand-corrected fine-tuning set.
 | `data/real-lines/` | **hand-corrected** scan lines — committed; `eval/` (held out) and `finetune/` |
 | `model/` | the [model card](model/MODEL_CARD.md) and evaluation reports (the `cu.traineddata` binary itself ships via [Releases](../../releases), not in the repo) |
 | `training/` | tesstrain working state (checkpoints, unicharset) — not committed |
-| `docs/` | the full workflow, per-stage guides, and troubleshooting |
+| `docs/` | the [manual](docs/manual.md), reference pages, and troubleshooting |
 
 ## Just want to OCR?
 
@@ -32,18 +32,23 @@ tesseract your_line.png stdout --psm 13 -l cu --tessdata-dir /path/to/download-d
 # (or copy it into your tessdata/ dir to use -l cu directly — see model/README.md)
 ```
 
-## Quickstart (reproduce / retrain)
+## Train or improve the model
+
+**Start with the [manual](docs/manual.md).** It walks through every step,
+from making the practice data to publishing a release, with the exact
+commands and what you should see after each one.
+
+In short:
 
 ```bash
-# 1. clone with submodules (corpus + fonts) and install python deps
-git clone --recurse-submodules <this-repo> && cd church-slavonic-ocr
+git clone --recurse-submodules https://github.com/slavonic/church-slavonic-ocr.git
+cd church-slavonic-ocr
 python3 -m venv .venv && source .venv/bin/activate
-make setup         # git submodule update --init --recursive + pip install -r requirements.txt
-
-# 2. see docs/pipeline.md for the full workflow
-make dataset       # regenerate synthetic ground truth
-make train         # from-scratch tesstrain run (needs a tesstrain checkout)
-make eval          # score against data/real-lines/eval
+make setup          # fonts, corpus, python packages (also needs Tesseract + tesstrain: manual, Step 1)
+make dataset        # Step 2: synthetic training lines
+make train-seeded   # Step 3: base model
+make review-staging # Step 4: correct real lines (after extract_lines.py)
+make eval           # Step 5: score on held-out real lines
 ```
 
 ## Results
@@ -52,15 +57,21 @@ Download the trained model from the [**Releases**](../../releases) page. See the
 [model card](model/MODEL_CARD.md) for current metrics and
 [`model/eval/`](model/eval) for the per-line report. Character error rate is
 reported two ways — full, and with combining marks stripped — so letterform
-accuracy is separable from diacritic placement (see `docs/evaluation.md`).
+accuracy is separable from diacritic placement (see
+[evaluation](docs/evaluation.md#the-headline-numbers)).
 
 ## Documentation
 
-- [`docs/pipeline.md`](docs/pipeline.md) — the end-to-end workflow, corpus → model
+**Start here:** [`docs/manual.md`](docs/manual.md), the step-by-step guide from
+nothing to a published model.
+
+Reference, for when you need the details:
+
 - [`docs/data-generation.md`](docs/data-generation.md) — `cu_make_training_data.py`: fonts, charset, hyphenation, degradation
-- [`docs/training.md`](docs/training.md) — tesstrain setup, from-scratch vs fine-tune, resuming, parallelism
-- [`docs/evaluation.md`](docs/evaluation.md) — extracting real lines and measuring CER/WER
-- [`docs/troubleshooting.md`](docs/troubleshooting.md) — the failure modes we actually hit and how to read them
+- [`docs/training.md`](docs/training.md) — seeded vs from-scratch training, the fine-tune rules, resetting the charset
+- [`docs/evaluation.md`](docs/evaluation.md) — every `extract_lines.py` option, and how to read `cu_eval.py`'s output
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — the failure modes we actually hit, grouped by step
+- [`data/README.md`](data/README.md) — what's in `data/`, and ground-truth typing conventions
 
 ## License & attribution
 

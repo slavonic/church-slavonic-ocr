@@ -1,5 +1,9 @@
 # Training
 
+Reference for [manual](manual.md) Steps 3, 6 and 7: how training works, why it's
+done this way, and the rules that keep it from breaking. For the step-by-step
+commands, follow the manual.
+
 Training uses [tesstrain](https://github.com/tesseract-ocr/tesstrain) as the
 harness; this repo supplies the ground truth and holds the result. tesstrain is
 kept as a separate checkout (set `TESSTRAIN=` for the Makefile, default `../tesstrain`).
@@ -122,15 +126,18 @@ Each of these comes from a run that failed silently.
 5. **Success means `At iteration` lines, not the absence of `Error 1`.**
    tesstrain pipes `lstmtraining` through `tee`, so `make` reports `tee`'s exit
    status and a crashed `lstmtraining` can look like a clean run. See
-   `docs/troubleshooting.md`.
+   [troubleshooting](troubleshooting.md#fine-tune-log-stops-after-continuing-from--make-reports-no-error).
 
 ### Recipe
+
+The same commands, with explanations, are in
+[manual, Step 6](manual.md#step-6-fine-tune-on-the-real-lines).
 
 ```bash
 # one time: freeze the start model (e.g. the seeded model from `make train-seeded`)
 cp <seeded cu.traineddata> training/cu_seed.traineddata
 
-cp data/real-lines/finetune/* data/cu-ground-truth/
+cp data/real-lines/finetune/*.png data/real-lines/finetune/*.gt.txt data/cu-ground-truth/
 make -C $TESSTRAIN training MODEL_NAME=cu_v2 START_MODEL=cu_seed \
   DATA_DIR=$PWD/training GROUND_TRUTH_DIR=$PWD/data/cu-ground-truth \
   TESSDATA=$PWD/training \
@@ -145,7 +152,8 @@ already has; compare the numbered checkpoints rather than trusting the last.
 `combine_tessdata -u $(TESSDATA)/$(START_MODEL).traineddata …`, and its default
 for `TESSDATA` is a `usr/share/tessdata/` folder next to `DATA_DIR`, a path this
 repo never creates. Left at the default, that step fails with
-`combine_tessdata -u … Error 1` and no further explanation.
+[`combine_tessdata -u … Error 1`](troubleshooting.md#combine_tessdata--u--error-1-at-the-start-of-a-fine-tune)
+and no further explanation.
 
 **Check that it is really training.** Near the top of `finetune.log` you should
 see the network summary ending in `Fc<N>` and a line
@@ -180,7 +188,7 @@ If the checkpoint is older than the proto, no training happened after the
 proto was built (the proto is rebuilt whenever the ground truth changes).
 Packaging then fails with `Code range changed … Must supply the old
 traineddata`; do not paper over it with `--old_traineddata` (see
-`docs/troubleshooting.md`).
+[troubleshooting](troubleshooting.md#code-range-changed-from-n-to-m--must-supply-the-old-traineddata-for-code-conversion)).
 
 ## Resetting the charset
 
@@ -195,10 +203,14 @@ make train-seeded
 ```
 
 `clean-output` drops the unicharset/recoder/checkpoints but keeps the `.lstmf`
-(charset-independent), so you don't pay the long regeneration again. The
-published `model/cu.traineddata` is left alone until a replacement has been
-evaluated. For a fine-tune, don't reset in place at all: start a new
-`MODEL_NAME` (rule 1 above).
+(charset-independent), so you don't pay the long regeneration again.
+`make reset-charset` runs the first two lines **and also deletes
+`model/cu.traineddata`**, and `make train-seeded` overwrites it when it
+finishes. Either way, copy the current model somewhere first if you may want
+it back.
+
+For a fine-tune, don't reset in place at all: start a new `MODEL_NAME`
+(rule 1 above).
 
 If you relabel ground truth (e.g. a divider character), re-copy the changed
 files into `data/cu-ground-truth/` so their timestamps are newer than the
