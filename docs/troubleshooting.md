@@ -49,56 +49,70 @@ model from `make train-seeded` — with no error, and `--reocr` won't help
 because the model *file* genuinely hasn't changed. Confirm with
 `ls -la model/cu.traineddata training/cu/checkpoints/` — if the checkpoints
 are newer than the deployed traineddata, that's it. Fix: package the
-checkpoint and copy it over (see the end of the fine-tuning section in
-`docs/training.md`) before re-evaluating.
+checkpoint under its own name and evaluate that file with `--model <name>
+--tessdata-dir training` (see "Package and evaluate" in `docs/training.md`)
+before copying it into `model/`.
 
 ## Ordinary text in a line reads well, then a number at the end explodes into garbage
 
 Symptom: a line's main text decodes nearly perfectly, then a trailing number
-— a page marker, verse number, or Cyrillic letter-numeral like `г҃` — turns
-into unrelated symbol garbage, often after a noticeably wide gap in the
-reference text (`Послѣ́дованїе ѡ҆ и҆сповѣ́данїи 73` → correct text, then `73`
-becomes `:с:с:с::с:стз`).
+(a page marker, verse number, or Cyrillic letter-numeral like `г҃`) turns into
+unrelated symbol garbage, often after a noticeably wide gap in the reference
+text (`Послѣ́дованїе ѡ҆ и҆сповѣ́данїи 73` → correct text, then `73` becomes
+`:с:с:с::с:стз`).
 
-The wide gap is the tell: that number is very likely a distinct typographic
-zone — a running header or verse marker — that `extract_lines.py`'s
-segmentation is incidentally sweeping into the main text-line crop. Numbering
-apparatus is a small fraction of continuous liturgical prose, so it's
-plausibly just undertrained relative to running text — structurally the same
-shape of problem as the melisma-marker case above (a construct that's rare in
-the training distribution, failing much harder than its rarity alone would
-predict). Quantify it with `cu_eval.py`'s built-in `numerals` bucket
-(`docs/evaluation.md`) before deciding it's worth chasing — check whether it
-carries a disproportionate share of total error the same way melisma did.
+**Measure before chasing it.** A few striking lines in the worst-lines list
+are not a pattern. `cu_eval.py`'s `numerals` bucket (`docs/evaluation.md`)
+reports how many lines and characters actually contain Arabic digits and what
+share of total error they carry. In this project's eval set that bucket was a
+single line, 0.3% of reference characters and 1.5% of total error, so the
+worst-list impression was misleading and there was nothing to fix. Cyrillic
+letter-numerals are not counted by that bucket, and a "contains titlo" bucket
+would not isolate them either, since the titlo also marks ordinary
+abbreviations like `бг҃ъ`.
 
-If it does: check the crops in `report.html` first, to confirm these really
-are separate zones rather than ordinary in-line numerals. If confirmed, either
-crop tighter to exclude the marginal number, or make sure enough
-number-containing real lines are in `data/real-lines/finetune/` for the model
-to actually learn that register.
+If the bucket does turn out to carry a disproportionate share, a wide gap
+before the number suggests a distinct typographic zone (a running header or
+verse marker) that `extract_lines.py`'s segmentation sweeps into the
+main-text crop. Check the crops in `report.html` to confirm. Then either crop
+tighter to exclude the marginal number, or add enough number-containing real
+lines to `data/real-lines/finetune/` for the model to learn that register.
 
-## A character introduced only in fine-tune data gets consistently misread as a similar-looking existing character
+## A mark that appears only in the fine-tune data is misread as a similar-looking mark
 
-Symptom: a mark that appears **only** in your hand-corrected real lines (never
-in the synthetic corpus) — e.g. the `~`/`‿` melisma divider — comes out as a
-different, visually similar mark that *was* in the synthetic data (e.g. `_`,
-the hyphenation token), almost every time it occurs, even though ordinary text
-in the same fine-tune is reading fine.
+Symptom: a mark that occurs only in your hand-corrected real lines (never in
+the synthetic corpus) comes out as a different mark that *was* in the synthetic
+data, almost every time, while ordinary text in the same lines reads fine. The
+case we hit: a syllable divider labeled `~` in real chant lyrics, read back as
+`_` (the hyphenation token) or as stray dashes and spaces.
 
-Cause: `START_MODEL=cu` fine-tuning merges unicharsets
-(`merge_unicharsets` in tesstrain — see `docs/training.md`). A character with
-no synthetic examples enters the merged unicharset as a **brand-new output
-class with random initial weights**, competing against a visually similar
-class that carries the full weight of your original run (tens of thousands of
-iterations). A short fine-tune is nowhere near enough for the new class to
-catch up — the network defaults to its confident, well-trained neighbor.
-Quantify how much of your total CER this accounts for with `cu_eval.py`'s
-built-in split (`docs/evaluation.md`) before deciding it's worth fixing.
+First decide which of two causes you have; they need opposite fixes.
 
-Fix: give the new class real exposure — more real-line examples containing
-it in `data/real-lines/finetune/`, and/or more fine-tune iterations (a cold
-class needs materially more than a warm one to converge). This is a data/
-iteration problem, not a sign the model or the character choice is broken.
+**A. Two labels for one image.** If the printed marks are visually the same
+(a syllable dash and a line-end hyphen are both just a short dash), the model
+is being trained on contradictory pairs: the same pixels labeled `_` in the
+synthetic data and `~` in the real data. Nothing visual separates them, so
+more data and more iterations cannot fix it. Fix the labels: use **one token**
+for marks that look alike. This project uses `_` for both (see
+`data/README.md`); position already tells you which is which (line-final =
+hyphenation, mid-line = syllable boundary), so nothing is lost.
+
+**B. A genuinely distinct mark that is just rare.** `merge_unicharsets` adds a
+character that exists only in the fine-tune data as a new output class with
+random initial weights, competing against classes with tens of thousands of
+iterations behind them. If the mark really does look different, the fix is
+exposure: more real lines containing it in `data/real-lines/finetune/`, and
+more fine-tune iterations (a cold class needs materially more than a warm one).
+
+Test for A before spending effort on B: open a few misread crops in
+`report.html` and ask whether you could tell the mark from its confusion
+partner by eye. Quantify the damage first with `cu_eval.py`'s per-construct
+split (`docs/evaluation.md`).
+
+Even after the labels agree, lines with mid-word dividers can stay weak: the
+synthetic corpus never contains a divider inside a word, so letters next to it
+are unfamiliar. If that persists, render syllabified corpus text with a drawn
+dash as the divider.
 
 ## Words come out flipped to full caps or alternating case, otherwise legible
 
@@ -126,6 +140,62 @@ doesn't exist. Fix: pass `TESSDATA=$PWD/training` (or `$PWD/model`) explicitly
 `START_MODEL=` fine-tune path; `train_seeded.py` never hits it, since it
 extracts and continues from the seed model directly rather than going through
 tesstrain's own `START_MODEL` lookup.
+
+## `Code range changed from N to M!` / `Must supply the old traineddata for code conversion!`
+
+`N` and `M` are the number of output classes. The message appears in two very
+different places.
+
+*At the start of a fine-tune,* right after a line naming
+`…/checkpoints/<name>_checkpoint`: `lstmtraining` first tries to resume from a
+checkpoint already sitting in the output directory, rejects it because the
+class count changed, and falls back to `--continue_from`. By itself this is
+harmless, but it tells you the `MODEL_NAME` was reused and an old run's
+checkpoint is still there. Use a fresh name per run (`docs/training.md`, rule 1).
+
+*At `lstmtraining --stop_training`, ending in `Failed to read continue from`:*
+fatal. The checkpoint and the proto `--traineddata` you passed describe
+networks with different class counts, so the unicharset you supplied is not the
+one the checkpoint was trained against. The usual cause is a checkpoint that is
+**older than the proto**: the proto was rebuilt after the ground truth changed
+(a relabel, a dropped character), and the training run that should have
+produced a matching checkpoint never ran or never finished. Confirm with
+`ls -l --time-style=full-iso` on both files, and check whether anything in
+`checkpoints/` is newer than the proto.
+
+Do not silence it with `--old_traineddata`. That makes the command succeed by
+converting the *old* checkpoint's weights to the new charset, so you deploy the
+previous model under a fresh timestamp and the next eval looks like the change
+did nothing. Fix it by getting a new run to finish, under a new `MODEL_NAME`.
+
+## Fine-tune log stops after `Continuing from …`; `make` reports no error
+
+Symptom: `finetune.log` ends right after the network summary and
+`Continuing from …/<name>.lstm`, followed by `make: Leaving directory`, with no
+`At iteration …` lines and no `Error`. No new checkpoint is ever written.
+
+Two things combine here.
+
+- **`make` cannot see the failure.** tesstrain runs
+  `lstmtraining … 2>&1 | tee -a training.log`. A pipeline's exit status is that
+  of its last command, so a crashed `lstmtraining` looks like success. Treat
+  `At iteration` lines as the only proof of training. To see the real exit
+  status and any crash text, run the `lstmtraining` command printed at the top
+  of the log by hand, without the `| tee`, and check `echo $?`.
+- **The start-model files are probably inconsistent.** `--continue_from`
+  loads weights from `<MODEL_NAME>/<name>.lstm`, which tesstrain extracts from
+  the start model only if it is missing or out of date, so a file left over
+  from an earlier run is reused. `--old_traineddata` reads the class map from
+  `<TESSDATA>/<START_MODEL>.traineddata`, which may have since been
+  overwritten by a packaging step. The network summary in the log shows which
+  weights actually loaded: `Fc<N>` is that model's output width, and
+  `Code range changed from <N> to <M>` should start from the class count of the
+  model you meant to continue from. If `N` is the wrong model's width, the
+  files are mixed.
+
+Fix: freeze the intended start model as its own file, pick a fresh
+`MODEL_NAME`, and rerun (`docs/training.md`, "Fine-tuning on real lines"). That
+leaves no stale `.lstm`, checkpoint or proto for the run to pick up.
 
 ## BCER pinned ~98–100% after tens of thousands of iterations (from scratch)
 

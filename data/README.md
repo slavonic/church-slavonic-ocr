@@ -35,10 +35,46 @@ few KB each), so plain git handles them — no Git LFS needed.
   synthetic pairs so the charset picks up their glyphs.
 
 Produce more of either with `scripts/extract_lines.py` (PDF/DJVU → crops +
-pre-filled `.gt.txt`), pointed at `real-lines/staging/` — a gitignored scratch
-area, not `eval/`/`finetune/` directly. Then use `scripts/review_staging.py`
-(`make review-staging`) to correct each `.gt.txt` against its crop and file the
-pair straight into `eval/` or `finetune/` — it moves the `.png`+`.gt.txt` pair
-together in one action, so they can't end up separated or copied into the
-wrong place the way a manual `cp`/`mv` can. See `docs/evaluation.md` for the
-full workflow. Keep the eval and finetune sets strictly disjoint.
+pre-filled `.gt.txt`), then correct each `.gt.txt` against its crop. Keep the
+eval and finetune sets strictly disjoint.
+
+## Ground-truth conventions
+
+**One divider token: `_`.** A dash printed between syllables or at a line end
+is transcribed as `_`, whether it is a line-break hyphen or a syllable divider
+in chant lyrics:
+
+```
+се_бѣ̀ пред̾_ꙋ_го_то́_ва: ᲂу҆_твер_
+```
+
+The synthetic data already uses `_` for line-end hyphenation. In the books we
+transcribe, a syllable dash looks like a hyphen, so giving it a second label
+(`~`, `‿`) would teach the model two answers for one image, which it cannot
+resolve (see `docs/troubleshooting.md`). Nothing is lost by merging them:
+position says which is which (line-final = hyphenation, mid-line = syllable
+boundary), and the syllable boundary is what a later notation model aligns to.
+
+Use a separate token only if a book prints a visibly different mark (for
+instance a long extension line that is unmistakably not a hyphen) *and* you
+want the model to tell them apart.
+
+**Syllabification tool.** The standalone syllabifier (not part of this repo)
+produces text in this convention with `--divider '_'` on the command line, or
+the "custom" divider in its web UI.
+
+**Relabeling older files.** If any real-line files still use `~` or `‿`:
+
+```bash
+grep -l '[~‿]' data/real-lines/*/*.gt.txt | wc -l      # how many will change
+sed -i 's/[~‿]/_/g' data/real-lines/*/*.gt.txt          # commit first so you can diff
+cp data/real-lines/finetune/* data/cu-ground-truth/     # refresh the copies tesstrain reads
+```
+
+The `cp` gives the files new timestamps, so make regenerates just their
+`.box`/`.lstmf`. Then run a **new** fine-tune under a new `MODEL_NAME`
+(`docs/training.md`): a model that has already learned `~` keeps that class
+(charsets only grow across a `START_MODEL` run), so for a clean result start
+from a model that never saw it. Scores on the relabeled eval set are not
+strictly comparable to earlier ones, because the reference text changed.
+

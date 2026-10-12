@@ -38,7 +38,10 @@ much easier and not comparable across data changes — see `docs/troubleshooting
 | CER (marks stripped) | [X.X %] |
 | WER (full) | [X.X %] |
 
-Ground-truth convention: line-break hyphenation is transcribed as `_`.
+Ground-truth convention: a dash between syllables or at a line break, whether
+line-end hyphenation or a syllable divider in chant lyrics, is transcribed as a
+single token, `_`. The model does not distinguish the two; position does
+(line-final = hyphenation, mid-line = syllable boundary).
 
 ## Intended use & limits
 

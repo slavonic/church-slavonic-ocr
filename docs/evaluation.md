@@ -61,8 +61,9 @@ under `(unrecognized filename pattern)` rather than silently mis-tagged, so it
 surfaces instead of hiding. Turn it off with `--no-by-book`.
 
 By default the console summary also splits CER into named buckets by
-construct — **melisma** (`~`/`‿`) and **numerals** (`0`-`9`) — since both have
-turned out to need separate diagnosis (see `docs/troubleshooting.md`): each
+construct, **melisma** (`~`/`‿`) and **numerals** (`0`-`9`), which is what the
+lines were measured with while those marks were in use (see
+`docs/troubleshooting.md`): each
 reports lines, characters, its own CER, and what fraction of *total
 edit-distance error* it accounts for, against how big a fraction of the text
 it actually is. That last ratio is the point — it's a precise answer to "how
@@ -74,6 +75,16 @@ Pass `--split 'name=chars'` (repeatable) to define your own buckets instead —
 a line lands in the first bucket it matches, checked in the order given, and
 whatever's left becomes "other". `--split ''` disables the whole feature.
 
+Since dividers are now transcribed as `_` (`data/README.md`), the default
+`melisma` bucket matches nothing on relabeled data and is silently skipped. To
+isolate lines that contain a divider, pass the buckets explicitly (passing
+`--split` replaces the defaults, so list both):
+
+```bash
+python3 scripts/cu_eval.py data/real-lines/eval --model cu_v2 --tessdata-dir training \
+  --split 'dividers=_' --split 'numerals=0123456789'
+```
+
 Caveats:
 
 - OCR is cached per line as `.hyp.txt`. The tool now compares each cache's
@@ -84,6 +95,11 @@ Caveats:
   can't locate the model file to compare against (a bare language name with no
   `--tessdata-dir`, relying on `TESSDATA_PREFIX`), it warns instead and you
   should pass `--reocr` explicitly.
+- **Switching between models:** the staleness check only asks whether a cache is
+  older than the model file being scored. If you evaluate a newer model and then
+  an older one, the cache written by the newer model looks fresh and is reused,
+  so you would be scoring the wrong model's output. Pass `--reocr` whenever you
+  change `--model`.
 - The tool flags lines where OCR == reference exactly; a high count means some
   references were left uncorrected and are flattering the score.
 

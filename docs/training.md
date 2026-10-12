@@ -57,6 +57,11 @@ python3 scripts/train_seeded.py --tesstrain ../tesstrain --max-iterations 100000
 Expect BCER to break downward within the first 1–2k iterations. The final
 model lands at `training/cu.traineddata` (and `model/` via the make target).
 
+**`make train` and `make train-seeded` overwrite `model/cu.traineddata`
+automatically.** Before retraining, keep the model you may want back:
+`cp model/cu.traineddata training/cu_v1.traineddata` (a frozen copy is also what
+you want as a fine-tune start model; see "Fine-tuning on real lines").
+
 ## Plain from-scratch run
 
 The unseeded path — clean charset, but subject to the init dice-roll above.
@@ -86,50 +91,118 @@ cp training/cu.traineddata model/
 
 ## Fine-tuning on real lines
 
-The highest-leverage step once the synthetic model is clean. Copy corrected real
-lines into the ground-truth dir (so the charset picks up their glyphs), keeping
-the eval set out, and continue from the current model:
+The highest-leverage step once the synthetic model is clean: continue from the
+current model on corrected real lines, with the eval set kept out.
+
+### Rules that keep a fine-tune from breaking
+
+Each of these comes from a run that failed silently.
+
+1. **Every run gets its own `MODEL_NAME`, and the start model is a frozen
+   file under a different name** (`cu_seed` → `cu_v2`). With
+   `START_MODEL=cu MODEL_NAME=cu`, the start model and the output share
+   `training/cu/` and `training/cu.traineddata`, so checkpoints, the extracted
+   `cu.lstm` and the proto traineddata from earlier runs get reused or rejected
+   without any error.
+2. **Never write a packaged model to a path tesstrain reads as a start
+   model.** With `TESSDATA=$PWD/training`, tesstrain passes
+   `training/<START_MODEL>.traineddata` to `lstmtraining` as
+   `--old_traineddata` (its class map). Packaging a fine-tuned model over that
+   file leaves the next run with weights from one network and a class map from
+   another.
+3. **Keep a copy of every model you might want to roll back to.** Package into
+   a new filename each time, and copy into `model/` only after the new model
+   beats the current one on the real eval set. `model/cu.traineddata` is the
+   published copy, not a working file.
+4. **Charsets only grow across a `START_MODEL` run.** tesstrain builds the new
+   unicharset with `merge_unicharsets` (start model + your ground truth), so a
+   class the start model learned stays even if you have since removed that
+   character from the ground truth. To genuinely drop a character, start from
+   a model that never had it.
+5. **Success means `At iteration` lines, not the absence of `Error 1`.**
+   tesstrain pipes `lstmtraining` through `tee`, so `make` reports `tee`'s exit
+   status and a crashed `lstmtraining` can look like a clean run. See
+   `docs/troubleshooting.md`.
+
+### Recipe
 
 ```bash
+# one time: freeze the start model (e.g. the seeded model from `make train-seeded`)
+cp <seeded cu.traineddata> training/cu_seed.traineddata
+
 cp data/real-lines/finetune/* data/cu-ground-truth/
-make -C $TESSTRAIN training MODEL_NAME=cu START_MODEL=cu \
+make -C $TESSTRAIN training MODEL_NAME=cu_v2 START_MODEL=cu_seed \
   DATA_DIR=$PWD/training GROUND_TRUTH_DIR=$PWD/data/cu-ground-truth \
   TESSDATA=$PWD/training \
-  MAX_ITERATIONS=<a few thousand>
-
-# REQUIRED — `training` only writes checkpoints; it does not package a usable
-# .traineddata, and nothing above touches model/. Skipping this step means
-# any eval against --tessdata-dir model silently scores the OLD (pre-fine-tune)
-# model, with no error or warning anywhere.
-lstmtraining --stop_training \
-  --continue_from training/cu/checkpoints/cu_checkpoint \
-  --traineddata training/cu/cu.traineddata \
-  --model_output training/cu.traineddata
-cp training/cu.traineddata model/cu.traineddata
+  MAX_ITERATIONS=10000 2>&1 | tee finetune.log
 ```
 
-`TESSDATA` must be passed explicitly here. tesstrain unpacks `START_MODEL` with
-`combine_tessdata -u $(TESSDATA)/$(START_MODEL).traineddata …`, and its
-default for `TESSDATA` is a `usr/share/tessdata/` folder next to `DATA_DIR` —
-a path this repo never creates. Left at the default, that step fails with
-`combine_tessdata -u … Error 1` and no further explanation. Point `TESSDATA`
-at whichever directory actually holds `cu.traineddata` — `$PWD/training`
-(tesstrain's raw output) and `$PWD/model` (the published copy) both work.
+As a rule of thumb, use around 10,000 iterations when continuing from a model
+that has never seen real lines, and around 5,000 when continuing from one that
+already has; compare the numbered checkpoints rather than trusting the last.
+
+`TESSDATA` must be passed explicitly. tesstrain unpacks `START_MODEL` with
+`combine_tessdata -u $(TESSDATA)/$(START_MODEL).traineddata …`, and its default
+for `TESSDATA` is a `usr/share/tessdata/` folder next to `DATA_DIR`, a path this
+repo never creates. Left at the default, that step fails with
+`combine_tessdata -u … Error 1` and no further explanation.
+
+**Check that it is really training.** Near the top of `finetune.log` you should
+see the network summary ending in `Fc<N>` and a line
+`Code range changed from <start model classes> to <merged classes>`, followed
+soon by `At iteration …` lines. If the log stops after `Continuing from …` with
+no iteration lines, the run did not train even if `make` printed no error.
+
+### Package and evaluate
+
+`training` only writes checkpoints; it does not produce a usable
+`.traineddata`. Package under the run's own name, then evaluate that file
+directly:
+
+```bash
+ls -l --time-style=full-iso training/cu_v2/cu_v2.traineddata \
+                            training/cu_v2/checkpoints/cu_v2_checkpoint
+#   the checkpoint must be NEWER than the proto traineddata
+
+lstmtraining --stop_training \
+  --continue_from training/cu_v2/checkpoints/cu_v2_checkpoint \
+  --traineddata training/cu_v2/cu_v2.traineddata \
+  --model_output training/cu_v2.traineddata
+
+python3 scripts/cu_eval.py data/real-lines/eval --model cu_v2 --tessdata-dir training \
+  --report model/eval/report.html --tsv model/eval/metrics.tsv
+
+# only once it beats the model currently in model/:
+cp training/cu_v2.traineddata model/cu.traineddata
+```
+
+If the checkpoint is older than the proto, no training happened after the
+proto was built (the proto is rebuilt whenever the ground truth changes).
+Packaging then fails with `Code range changed … Must supply the old
+traineddata`; do not paper over it with `--old_traineddata` (see
+`docs/troubleshooting.md`).
 
 ## Resetting the charset
 
 Changing the allow-set (e.g. adding digits or `_`) requires rebuilding the
-unicharset, or old state collides with new — a classic cause of a model that
-garbles even its own synthetic lines:
+unicharset, or old state collides with new, a classic cause of a model that
+garbles even its own synthetic lines. For a from-scratch or seeded run:
 
 ```bash
 make -C $TESSTRAIN clean-output MODEL_NAME=cu DATA_DIR=$PWD/training
-rm -f training/cu.traineddata model/cu.traineddata
-make train
+rm -f training/cu.traineddata
+make train-seeded
 ```
 
 `clean-output` drops the unicharset/recoder/checkpoints but keeps the `.lstmf`
-(charset-independent), so you don't pay the long regeneration again.
+(charset-independent), so you don't pay the long regeneration again. The
+published `model/cu.traineddata` is left alone until a replacement has been
+evaluated. For a fine-tune, don't reset in place at all: start a new
+`MODEL_NAME` (rule 1 above).
+
+If you relabel ground truth (e.g. a divider character), re-copy the changed
+files into `data/cu-ground-truth/` so their timestamps are newer than the
+`.box`/`.lstmf` derived from them; make then regenerates just those.
 
 ## Sanity checks
 
