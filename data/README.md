@@ -60,8 +60,9 @@ instance a long extension line that is unmistakably not a hyphen) *and* you
 want the model to tell them apart.
 
 **Syllabification tool.** The standalone syllabifier (not part of this repo)
-produces text in this convention with `--divider '_'` on the command line, or
-the "custom" divider in its web UI.
+produces text in this convention with `--divider '_'` in the
+[command-line tool](https://github.com/slavonic/cu-syllabifier), or the
+"custom" divider in its [web interface](https://sci.ponomar.net/syllabify/).
 
 **Relabeling older files.** If any real-line files still use `~` or `‿`:
 
