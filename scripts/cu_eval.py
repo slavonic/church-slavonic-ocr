@@ -9,6 +9,7 @@ image with your model and compares against the reference, reporting:
   * CER and WER, MICRO-averaged (total edits / total reference units)
   * the same computed with combining marks stripped, so you can see whether
     the errors are letterforms or just diacritic placement
+  * spaces around the `_` divider are ignored on both sides before scoring
   * a per-line table sorted worst-first, plus a self-contained report.html
     with each crop, its reference, the OCR, and a character-level diff.
 
@@ -39,6 +40,12 @@ def strip_marks(s: str) -> str:
     d = unicodedata.normalize("NFD", s)
     d = "".join(ch for ch in d if not unicodedata.combining(ch))
     return unicodedata.normalize("NFC", d)
+
+
+def normalize_divider(s: str) -> str:
+    """Drop spaces around the `_` divider, so `foo_bar`, `foo _bar`,
+    `foo_ bar` and `foo _ bar` all score the same."""
+    return re.sub(r"\s*_\s*", "_", s)
 
 
 def levenshtein(a, b) -> int:
@@ -197,6 +204,7 @@ def main():
             hyp = ocr(img, args.model, args.psm, args.tessdata_dir).strip()
             hyp_cache.write_text(hyp, encoding="utf-8")
 
+        ref, hyp = normalize_divider(ref), normalize_divider(hyp)
         if hyp == ref:
             identical += 1
 
