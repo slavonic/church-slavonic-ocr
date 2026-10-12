@@ -74,8 +74,9 @@ abbreviations like `бг҃ъ`.
 If the bucket does turn out to carry a disproportionate share, a wide gap
 before the number suggests a distinct typographic zone (a running header or
 verse marker) that `extract_lines.py`'s segmentation sweeps into the
-main-text crop. Check the crops in `report.html` to confirm. Then either crop
-tighter to exclude the marginal number, or add enough number-containing real
+main-text crop. Check the crops in `report.html` to confirm. Then either exclude
+the marginal number by re-extracting with `--margin` (see
+`docs/evaluation.md`), or add enough number-containing real
 lines to `data/real-lines/finetune/` for the model to learn that register.
 
 ## A mark that appears only in the fine-tune data is misread as a similar-looking mark

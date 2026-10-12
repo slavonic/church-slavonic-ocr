@@ -19,6 +19,15 @@ python3 scripts/extract_lines.py book.pdf --pages 12-15 --out data/real-lines/ev
   superscript), and delete lines where segmentation grabbed noise.
 - `--dpi 300–400` is the sweet spot; below ~300 the accent band smears and you
   measure the rasterization, not the model.
+- `--margin TOP,RIGHT,BOTTOM,LEFT` drops a page border before segmentation — a
+  printed frame, a scan edge, a running header, a marginal verse number. Values
+  are px (`40`, `40px`) or a share of the page (`5%`), with CSS shorthand: one
+  value for all sides, two for vertical,horizontal. For example
+  `--margin 12%` trims 12% off every side.
+  `--margin-mode crop` (default) insets the page and discards the border;
+  `--margin-mode mask` paints the border white but keeps the page size, which
+  leaves segmentation a quiet zone around the text block — try it if cropping
+  makes edge lines segment badly.
 - If a page OCRs as noise, its scan quality is the problem, not the model —
   binarize first (Sauvola + deskew) and use `--psm 4`. See `docs/troubleshooting.md`.
 
