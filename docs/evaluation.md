@@ -140,6 +140,30 @@ A line goes in the first bucket it matches; the rest are "other".
   reference exactly. A high count suggests some references were never
   corrected and are flattering the score.
 
+## Re-checking lines where OCR equals the reference — `review_identical.py`
+
+`cu_eval.py` prints `NOTE: N line(s) had OCR == reference exactly` when some
+`.gt.txt` files match the cached `.png.hyp.txt`. Those lines score 0% CER, so
+if their references were never checked against the image they bias CER down.
+`review_identical.py` serves a web page (like `review_staging.py`) that walks
+through exactly those lines: the crop, the editable `.gt.txt`, and the cached
+OCR for reference.
+
+```bash
+make review-identical                       # data/real-lines/eval, port 8767
+python3 scripts/review_identical.py --dir data/real-lines/finetune
+python3 scripts/review_identical.py --port 8080 --no-browser
+```
+
+- It compares with the same rule as `cu_eval.py` (spaces around `_` ignored),
+  so the count matches the NOTE.
+- It reads the cached `.hyp.txt` files, so refresh them first with
+  `cu_eval.py ... --reocr`; stale caches give a wrong list.
+- The list is fixed when the script starts. Corrected lines stay in it;
+  restart to rescan.
+- Save writes the `.gt.txt` in place. Ctrl+Enter saves and advances,
+  Ctrl/Alt+Left/Right move without saving.
+
 ## Reviewing practice samples — `review_samples.py`
 
 The practice-data folder has too many files for a file manager or a `*` glob.

@@ -7,7 +7,7 @@ MAX_ITERATIONS ?= 100000
 TESSTRAIN      ?= ../tesstrain        # path to a tesseract-ocr/tesstrain checkout
 JOBS           ?= $(shell nproc)
 
-.PHONY: setup dataset train eval review review-staging release clean-train reset-charset
+.PHONY: setup dataset train eval review review-staging review-identical release clean-train reset-charset
 
 setup:            ## fetch corpus + font submodules and install python deps
 	git submodule update --init --recursive
@@ -39,6 +39,9 @@ review:           ## montage a few hyphenated training samples
 review-staging:   ## web UI to correct/delete extract_lines.py's staging output
 	python3 scripts/review_staging.py --dir data/real-lines/staging
 	python3 scripts/update_source_counts.py
+
+review-identical: ## web UI to re-check test lines whose text equals the model's output (run make eval first)
+	python3 scripts/review_identical.py
 
 release:          ## publish model/cu.traineddata as a GitHub Release asset — needs gh CLI, e.g. make release VERSION=v1.0
 	@test -n "$(VERSION)" || { echo "set VERSION=vX.Y (e.g. make release VERSION=v1.0)"; exit 1; }

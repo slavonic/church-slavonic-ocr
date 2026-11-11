@@ -404,8 +404,75 @@ the worst lines, each with its picture, your text, the model's text, and the
 differences marked.
 
 **If you see `NOTE: N line(s) had OCR == reference exactly`:** some lines may
-never have been corrected (the model's first guess was saved as-is). Check those
-lines, or the score will look better than it really is.
+never have been corrected (the model's first guess was saved as-is). Such a
+line counts as a perfect score, so the results look better than they really
+are. Check those lines as described below.
+
+### Check the lines the model got "perfectly right"
+
+**What it does:** shows you, one at a time, only the test lines where the
+model's reading is exactly the same as your saved text, so you can confirm
+that your text really matches the picture.
+
+**Step 1. Make sure the model's readings are fresh.** Old readings saved from
+an earlier run can be wrong. Have the model read every line again:
+
+```bash
+python3 scripts/cu_eval.py data/real-lines/eval --model cu --tessdata-dir model \
+  --reocr --report model/eval/report.html --tsv model/eval/metrics.tsv
+```
+
+This takes a few minutes. Look at the `NOTE:` line at the end: it now says how
+many lines are really identical.
+
+**Step 2. Open the checking page:**
+
+```bash
+make review-identical
+```
+
+A web page opens. For each line it shows:
+
+- the **picture** of the line,
+- a box with **your saved text**, which you can edit,
+- the **model's reading**, in grey, under the box,
+- a small label next to the counter (for example `3 / 38`) that says
+  *(still == OCR)* in orange while your text is the same as the model's, and
+  *(differs from OCR)* in green once you change it.
+
+**Step 3. For every line, compare your text with the picture, letter by
+letter,** including every accent, breathing mark, titlo and superscript
+letter.
+
+- **The text is wrong:** fix it in the box, then press **Save & next**.
+- **The text is already right:** just press **Save & next**. Nothing is
+  harmed. The label stays orange, and that is fine.
+
+| Button | Shortcut | What it does |
+|---|---|---|
+| **Save & next** | Ctrl+Enter | Save the text in the box and go to the next line |
+| **← Prev** / **Next →** | Ctrl+Left / Ctrl+Right | Move without saving |
+| Number box | type a number, press Enter | Jump to that line |
+
+If you changed the text and press Prev or Next without saving, the page asks
+before throwing your change away. The page remembers where you stopped, so you
+can close it and come back later.
+
+**Step 4. When you reach the last line, go back to the terminal and press
+Ctrl+C.** Then save your work:
+
+```bash
+git add data/real-lines
+git commit -m "Re-check test lines that matched the OCR"
+```
+
+Run `make eval` again. The score may get a little worse. That is the honest
+score, and it is what you should compare with in Step 7.
+
+> The list of lines is made when the page starts and does not change while you
+> work. Lines you fixed stay in the list, and the page does not renumber. To
+> check the same lines in the fine-tune set, run
+> `python3 scripts/review_identical.py --dir data/real-lines/finetune`.
 
 More on reading the results: [evaluation.md](evaluation.md#2-score--cu_evalpy).
 
@@ -682,6 +749,7 @@ All the `make` commands:
 | `make train` | Train the base model the plain way ([why not recommended](training.md#plain-from-scratch-run)) | 3 |
 | `make review-staging` | Open the web page for correcting lines | 4 |
 | `make eval` | Test `model/cu.traineddata` on the test set | 5, 7 |
+| `make review-identical` | Web page for re-checking test lines where the model's reading equals your text | 5 |
 | `make release VERSION=vX.Y` | Publish `model/cu.traineddata` on GitHub | 9 |
 | `make clean-train` | Delete all training work files (keeps data and model) | — |
 | `make reset-charset` | Reset the character list after changing the allowed characters. **Also deletes `model/cu.traineddata`**, so save a copy first ([details](training.md#resetting-the-charset)) | — |
