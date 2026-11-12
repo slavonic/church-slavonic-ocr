@@ -84,6 +84,246 @@ def html_diff(ref: str, hyp: str) -> str:
     return "".join(out)
 
 
+# ------------------------------------------------------------- bootstrap ---
+
+def bootstrap_ci(pairs, n_boot=2000, seed=0, level=0.95):
+    """95% percentile CI of micro-averaged error (in %) from (edits, chars)
+    pairs, resampling whole lines with replacement. Lines, not characters,
+    are the unit: errors cluster within a line (one bad crop -> many errors)."""
+    import random
+    if not pairs or n_boot <= 0:
+        return None
+    rng = random.Random(seed)
+    k = len(pairs)
+    stats = []
+    for _ in range(n_boot):
+        d = n = 0
+        for _ in range(k):
+            e, c = pairs[rng.randrange(k)]
+            d += e
+            n += c
+        stats.append(100 * d / max(1, n))
+    stats.sort()
+    a = (1 - level) / 2
+    return stats[int(a * n_boot)], stats[min(n_boot - 1, int((1 - a) * n_boot))]
+
+
+def paired_bootstrap(new, old, n_boot=2000, seed=0, level=0.95):
+    """Paired bootstrap of the CER change (new - old, in points) over the same
+    lines. `new` and `old` are lists of (edits, chars) in the same line order.
+    Returns (change, lo, hi, share of resamples where new is better)."""
+    import random
+    rng = random.Random(seed)
+    k = len(new)
+    def cer(idx, side):
+        d = sum(side[i][0] for i in idx)
+        n = sum(side[i][1] for i in idx)
+        return 100 * d / max(1, n)
+    full = range(k)
+    change = cer(full, new) - cer(full, old)
+    diffs = []
+    for _ in range(n_boot):
+        idx = [rng.randrange(k) for _ in range(k)]
+        diffs.append(cer(idx, new) - cer(idx, old))
+    diffs.sort()
+    a = (1 - level) / 2
+    better = sum(d < 0 for d in diffs) / n_boot
+    return change, diffs[int(a * n_boot)], diffs[min(n_boot - 1, int((1 - a) * n_boot))], better
+
+
+def read_tsv_edits(path):
+    """image name -> (char edits, ref chars) from an earlier --tsv file. Uses
+    the char_edits column when present, else rebuilds it from cer_full."""
+    out = {}
+    with open(path, encoding="utf-8") as f:
+        head = f.readline().rstrip("\n").split("\t")
+        col = {h: i for i, h in enumerate(head)}
+        for line in f:
+            v = line.rstrip("\n").split("\t")
+            n = int(v[col["ref_chars"]])
+            if "char_edits" in col:
+                d = int(v[col["char_edits"]])
+            else:
+                d = round(float(v[col["cer_full"]]) * n / 100)
+            out[v[col["image"]]] = (d, n)
+    return out
+
+
+# --------------------------------------------------------- error pairs ---
+
+def glyph_units(s: str) -> list:
+    """Split into base character + its combining marks (NFD), so `и҆́` is one
+    unit and a wrong accent shows up as one substituted unit, not as noise."""
+    out = []
+    for ch in unicodedata.normalize("NFD", s):
+        if unicodedata.combining(ch) and out:
+            out[-1] += ch
+        else:
+            out.append(ch)
+    return out
+
+
+def align_units(a: list, b: list) -> list:
+    """Levenshtein alignment of two unit lists -> [(op, ref_unit, hyp_unit)]
+    for the non-matching positions only; op is 'sub', 'del' or 'ins'."""
+    n, m = len(a), len(b)
+    D = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n + 1):
+        D[i][0] = i
+    for j in range(m + 1):
+        D[0][j] = j
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            D[i][j] = min(D[i - 1][j] + 1, D[i][j - 1] + 1,
+                          D[i - 1][j - 1] + (a[i - 1] != b[j - 1]))
+    ops, i, j = [], n, m
+    while i or j:
+        if i and j and D[i][j] == D[i - 1][j - 1] + (a[i - 1] != b[j - 1]):
+            if a[i - 1] != b[j - 1]:
+                ops.append(("sub", a[i - 1], b[j - 1]))
+            i, j = i - 1, j - 1
+        elif i and D[i][j] == D[i - 1][j] + 1:
+            ops.append(("del", a[i - 1], ""))
+            i -= 1
+        else:
+            ops.append(("ins", "", b[j - 1]))
+            j -= 1
+    return ops
+
+
+def _base(u):
+    return "".join(c for c in u if not unicodedata.combining(c))
+
+
+def _marks(u):
+    return "".join(c for c in u if unicodedata.combining(c))
+
+
+def mark_names(m: str) -> str:
+    if not m:
+        return "none"
+    return " + ".join(unicodedata.name(c, f"U+{ord(c):04X}")
+                      .replace("COMBINING ", "").replace("CYRILLIC ", "").lower()
+                      for c in m)
+
+
+def has_repeated_mark(s: str) -> bool:
+    """True if one letter carries the same combining mark twice (e.g. a
+    doubled breathing), which never happens in correct text."""
+    for u in glyph_units(s):
+        m = _marks(u)
+        if len(m) != len(set(m)):
+            return True
+    return False
+
+
+def error_breakdown(rows) -> dict:
+    """Classify every unit-level error across all lines.
+
+    kinds   : Counter of error type -> count
+    marks   : Counter of (ref marks, hyp marks) for same-letter mark errors
+    letters : Counter of (ref unit, hyp unit) for all other errors ('' = none)
+    mark_letters : Counter of base letter -> mark errors on it
+    examples: (kind, key) -> up to 3 image names, for tracing back
+    repeated: lines whose OCR has a repeated mark on one letter (and refs that do)
+    """
+    from collections import Counter, defaultdict
+    kinds, marks, letters, mark_letters = Counter(), Counter(), Counter(), Counter()
+    examples = defaultdict(list)
+    total = 0
+    for r in rows:
+        name = r["img"].name
+        for op, a, b in align_units(glyph_units(r["ref"]), glyph_units(r["hyp"])):
+            total += 1
+            if op == "sub" and _base(a) == _base(b):
+                kind, key = "right letter, wrong marks", (mark_names(_marks(a)),
+                                                          mark_names(_marks(b)))
+                marks[key] += 1
+                mark_letters[_base(a)] += 1
+                ex = examples[("mark", key)]
+            else:
+                special = {" ": "space", "_": "“_” divider"}
+                u = a or b
+                what = special.get(_base(u), "letter")
+                kind = {"sub": "wrong letter" if what == "letter" else f"{what} replaced",
+                        "del": f"{what} missing", "ins": f"extra {what}"}[op]
+                key = (unicodedata.normalize("NFC", a), unicodedata.normalize("NFC", b))
+                letters[key] += 1
+                ex = examples[("letter", key)]
+            kinds[kind] += 1
+            if len(ex) < 3 and name not in ex:
+                ex.append(name)
+    return dict(
+        total=total, kinds=kinds, marks=marks, letters=letters,
+        mark_letters=mark_letters, examples=examples,
+        repeated_hyp=[r["img"].name for r in rows if has_repeated_mark(r["hyp"])],
+        repeated_ref=[r["img"].name for r in rows if has_repeated_mark(r["ref"])],
+    )
+
+
+def breakdown_html(bd: dict, nlines: int, top: int = 20, shown=()) -> str:
+    """HTML section for the report. `shown` = image names that have a row in
+    the report, so examples can link to them."""
+    esc = html.escape
+    tot = bd["total"] or 1
+
+    def ex_links(key):
+        out = []
+        for n in bd["examples"].get(key, []):
+            stem = esc(n.rsplit(".", 1)[0])
+            out.append(f'<a href="#{stem}">{stem}</a>' if n in shown else stem)
+        return ", ".join(out)
+
+    def vis(u):
+        # show the unit itself; a bare mark gets a dotted circle to sit on
+        if u == "":
+            return "<span class=m>∅</span>"
+        if u == " ":
+            return "<span class=m>␣</span>"
+        if unicodedata.combining(u[0]):
+            u = "◌" + u
+        return esc(u)
+
+    p = ["<h2>Error breakdown</h2>",
+         f"<p class=m>{bd['total']} errors, counted per letter-with-its-marks "
+         "(so a wrong accent is one error, not several). Spaces around “_” are "
+         "ignored, as in the scores.</p>"]
+
+    rep = len(bd["repeated_hyp"])
+    p.append(f"<p><b>Repeated marks:</b> {rep} of {nlines} lines "
+             f"({100 * rep / max(1, nlines):.0f}%) have the same mark twice on one "
+             "letter in the OCR")
+    if bd["repeated_ref"]:
+        p.append(f"; <span class=cer>{len(bd['repeated_ref'])} reference line(s) do too, "
+                 f"which is a typo: {esc(', '.join(bd['repeated_ref'][:10]))}</span>")
+    p.append(".</p>")
+
+    p.append("<h3>By kind</h3><table><tr><th>kind<th>count<th>share")
+    for k, v in bd["kinds"].most_common():
+        p.append(f"<tr><td>{esc(k)}<td class=n>{v}<td class=n>{100 * v / tot:.1f}%")
+    p.append("</table>")
+
+    p.append(f"<h3>Mark confusions (right letter, wrong marks), top {top}</h3>"
+             "<table><tr><th>reference marks<th>OCR marks<th>count<th>examples")
+    for (a, b), v in bd["marks"].most_common(top):
+        p.append(f"<tr><td>{esc(a)}<td>{esc(b)}<td class=n>{v}"
+                 f"<td class=m>{ex_links(('mark', (a, b)))}")
+    p.append("</table>")
+
+    p.append("<h3>Letters that most often get wrong marks</h3><p class=txt>")
+    p.append(" &nbsp; ".join(f"{esc(l)}&thinsp;<span class=m>{v}</span>"
+                             for l, v in bd["mark_letters"].most_common(15)))
+    p.append("</p>")
+
+    p.append(f"<h3>Letter, space and divider errors, top {top}</h3>"
+             "<table><tr><th>reference<th>OCR<th>count<th>examples")
+    for (a, b), v in bd["letters"].most_common(top):
+        p.append(f"<tr><td class=txt>{vis(a)}<td class=txt>{vis(b)}<td class=n>{v}"
+                 f"<td class=m>{ex_links(('letter', (a, b)))}")
+    p.append("</table>")
+    return "".join(p)
+
+
 # -------------------------------------------------------------------- ocr ---
 
 def ocr(image: Path, model: str, psm: int, tessdata: str) -> str:
@@ -162,6 +402,17 @@ def main():
                          "the first bucket it matches). Default: "
                          "'melisma=~\u203F' 'numerals=0123456789'. "
                          "Pass --split '' to disable.")
+    ap.add_argument("--bootstrap", type=int, default=2000, metavar="N",
+                    help="resamples for the 95%% confidence intervals "
+                         "(default 2000; 0 = off). Lines are resampled, so "
+                         "the interval shows how much the score could move "
+                         "with a different test set of the same size.")
+    ap.add_argument("--compare", type=Path, metavar="OLD_TSV",
+                    help="a --tsv file from an earlier run (e.g. the current "
+                         "model's model/eval/metrics.tsv). Prints the CER "
+                         "change on the lines both runs share, with a paired "
+                         "95%% confidence interval, and whether the change is "
+                         "clearly real.")
     ap.add_argument("--report", default="report.html")
     ap.add_argument("--tsv", default="metrics.tsv")
     args = ap.parse_args()
@@ -221,7 +472,8 @@ def main():
         tot["scd"] += scd; tot["scn"] += len(ref_s)
 
         rows.append(dict(img=img, ref=ref, hyp=hyp, cer=cer, wer=wer,
-                         cer_s=cer_s, nchar=len(ref), book=book_tag(gt)))
+                         cer_s=cer_s, nchar=len(ref), book=book_tag(gt),
+                         cd=cd, scd=scd, nchar_s=len(ref_s)))
 
     if not rows:
         sys.exit("no scorable pairs found.")
@@ -232,9 +484,12 @@ def main():
     print(f"\n  lines scored     : {len(rows)}")
     print(f"  reference chars  : {tot['cn']}")
     print(f"  ── micro-averaged ──")
-    print(f"  CER (full)       : {micro(tot['cd'], tot['cn']):6.2f}%")
-    print(f"  CER (no marks)   : {micro(tot['scd'], tot['scn']):6.2f}%   "
-          f"<- letterform-only error")
+    def ci(key_d, key_n):
+        b = bootstrap_ci([(r[key_d], r[key_n]) for r in rows], args.bootstrap)
+        return f"   (95% CI {b[0]:.2f}–{b[1]:.2f})" if b else ""
+    print(f"  CER (full)       : {micro(tot['cd'], tot['cn']):6.2f}%{ci('cd', 'nchar')}")
+    print(f"  CER (no marks)   : {micro(tot['scd'], tot['scn']):6.2f}%{ci('scd', 'nchar_s')}"
+          f"   <- letterform-only error")
     print(f"  WER (full)       : {micro(tot['wd'], tot['wn']):6.2f}%")
     gap = micro(tot['cd'], tot['cn']) - micro(tot['scd'], tot['scn'])
     print(f"  diacritic share  : {gap:6.2f} pts of CER live in the marks")
@@ -242,6 +497,33 @@ def main():
         print(f"\n  NOTE: {identical} line(s) had OCR == reference exactly. If you did "
               f"not verify\n        those against the image, they may be uncorrected "
               f"and bias CER down.")
+    if args.compare:
+        old = read_tsv_edits(args.compare)
+        common = [r for r in rows if r["img"].name in old]
+        print(f"\n  ── compared with {args.compare} ──")
+        if not common:
+            print("  no lines in common; nothing to compare.")
+        else:
+            if len(common) != len(rows) or len(common) != len(old):
+                print(f"  NOTE: only the {len(common)} lines in both runs are compared "
+                      f"(this run {len(rows)}, earlier run {len(old)}).")
+            new_p = [(r["cd"], r["nchar"]) for r in common]
+            old_p = [old[r["img"].name] for r in common]
+            nb = max(args.bootstrap, 2000)
+            change, lo, hi, better = paired_bootstrap(new_p, old_p, nb)
+            o = 100 * sum(d for d, _ in old_p) / max(1, sum(n for _, n in old_p))
+            print(f"  CER (full)       : {o:6.2f}% -> {o + change:6.2f}%   "
+                  f"change {change:+.2f} pts (95% CI {lo:+.2f} to {hi:+.2f})")
+            if hi < 0:
+                verdict = "BETTER: the improvement is larger than the noise."
+            elif lo > 0:
+                verdict = "WORSE: the new run is clearly worse."
+            else:
+                verdict = ("NO CLEAR DIFFERENCE: the change is within the noise "
+                           "of this test set.")
+            print(f"  verdict          : {verdict}")
+            print(f"  (new run better in {100 * better:.0f}% of {nb} resamples)")
+
     if stale_found:
         print(f"\n  NOTE: {stale_found} cached .hyp.txt predated {args.model}.traineddata "
               f"and were\n        automatically re-OCR'd. Scores reflect the CURRENT model.")
@@ -303,6 +585,17 @@ def main():
                 print(f"  {name:<{name_w}s} : {len(group):4d} lines  "
                       f"({n:5d} chars)  CER {c:6.2f}%")
 
+    bd = error_breakdown(rows)
+    print(f"\n  ── error breakdown ({bd['total']} errors; per letter-with-marks) ──")
+    for k, v in bd["kinds"].most_common(6):
+        print(f"  {k:<26s}: {v:5d}  ({100 * v / max(1, bd['total']):4.1f}%)")
+    rep = len(bd["repeated_hyp"])
+    print(f"  repeated mark in OCR      : {rep} of {len(rows)} lines")
+    if bd["repeated_ref"]:
+        print(f"  NOTE: {len(bd['repeated_ref'])} reference line(s) have the same mark "
+              f"twice on one letter (typo?): {', '.join(bd['repeated_ref'][:5])}")
+    print(f"  (full tables in {args.report})")
+
     print(f"\n  worst lines:")
     for r in rows[:10]:
         print(f"   {r['cer']*100:6.1f}%  ref: {r['ref'][:55]}")
@@ -310,10 +603,10 @@ def main():
 
     # TSV
     with open(args.tsv, "w", encoding="utf-8") as f:
-        f.write("cer_full\twer_full\tcer_nomarks\tref_chars\timage\treference\thypothesis\n")
+        f.write("cer_full\twer_full\tcer_nomarks\tref_chars\timage\treference\thypothesis\tchar_edits\n")
         for r in rows:
             f.write(f"{r['cer']*100:.2f}\t{r['wer']*100:.2f}\t{r['cer_s']*100:.2f}\t"
-                    f"{r['nchar']}\t{r['img'].name}\t{r['ref']}\t{r['hyp']}\n")
+                    f"{r['nchar']}\t{r['img'].name}\t{r['ref']}\t{r['hyp']}\t{r['cd']}\n")
 
     # HTML
     esc = html.escape
@@ -324,13 +617,20 @@ img{max-width:100%;background:#fff;border:1px solid #ccc}
 .m{color:#666;font-size:13px}.cer{font-weight:600;color:#c0504d}
 .lbl{display:inline-block;width:3.5em;color:#888}
 del{background:#ffd6d6;text-decoration:none}ins{background:#d6ffd6;text-decoration:none}
-.txt{font-size:20px}</style>"""]
-    parts.append(f"<h2>cu_eval — {len(rows)} lines, worst {min(args.top,len(rows))} shown</h2>")
+.txt{font-size:20px}
+table{border-collapse:collapse;margin:.5rem 0 1.5rem}
+th,td{border-bottom:1px solid #eee;padding:.2rem .7rem;text-align:left;vertical-align:top}
+td.n{text-align:right;font-variant-numeric:tabular-nums}</style>"""]
+    shown = {r["img"].name for r in rows[:args.top]}
+    parts.append(f"<h1>cu_eval — {len(rows)} lines</h1>")
+    parts.append(breakdown_html(bd, len(rows), shown=shown))
+    parts.append(f"<h2>Worst {min(args.top,len(rows))} lines</h2>")
     for r in rows[:args.top]:
         b64 = base64.b64encode(r["img"].read_bytes()).decode()
         mime = "image/png" if r["img"].suffix.lower().endswith("png") else "image/tiff"
+        anchor = html.escape(r["img"].name.rsplit(".", 1)[0])
         parts.append(
-            f'<div class=row><span class=cer>CER {r["cer"]*100:.1f}%</span> '
+            f'<div class=row id="{anchor}"><span class=m>{anchor}</span><br><span class=cer>CER {r["cer"]*100:.1f}%</span> '
             f'<span class=m>(no-marks {r["cer_s"]*100:.1f}% · WER {r["wer"]*100:.1f}%)</span>'
             f'<br><img src="data:{mime};base64,{b64}"><br>'
             f'<div class=txt><span class=lbl>ref</span>{esc(r["ref"])}</div>'

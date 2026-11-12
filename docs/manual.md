@@ -374,8 +374,8 @@ make eval
   lines scored     : 225
   reference chars  : 9842
   ── micro-averaged ──
-  CER (full)       :   3.10%
-  CER (no marks)   :   1.20%   <- letterform-only error
+  CER (full)       :   3.10%   (95% CI 2.70–3.55)
+  CER (no marks)   :   1.20%   (95% CI 0.95–1.48)   <- letterform-only error
   WER (full)       :  14.50%
   diacritic share  :   1.90 pts of CER live in the marks
 ```
@@ -386,6 +386,11 @@ What the numbers mean:
 
 - **CER (full)** is the main score: wrong characters per 100, counting accents
   and other marks. **2% or less** is the goal; 1% or less is excellent.
+- **95% CI** is how far the score could move just by chance, because the test
+  set is only a few hundred lines. In the example, the true score is very
+  likely somewhere between 2.70% and 3.55%. A wide range means the test set is
+  small. Two models whose scores differ by less than this range may really be
+  equally good. Step 7 checks this for you.
 - **CER (no marks)** is the same with all accents and marks ignored. If this is
   much lower than the full CER, the model reads the letters well and mostly gets
   the marks wrong.
@@ -397,11 +402,19 @@ What the numbers mean:
 Spaces before or after `_` don't count as mistakes, so `foo _bar` and `foo_bar`
 score the same.
 
-**Write down the CER (full) number.** You'll compare against it in Step 7.
+**Write down the CER (full) number.** Step 7 compares a new model against
+this run automatically, using the file `model/eval/metrics.tsv` that
+`make eval` just wrote.
 
-**See the mistakes:** open `model/eval/report.html` in a web browser. It shows
-the worst lines, each with its picture, your text, the model's text, and the
-differences marked.
+**See the mistakes:** open `model/eval/report.html` in a web browser.
+
+- At the top, **Error breakdown** sorts all the mistakes by kind: wrong letter,
+  wrong accent or other mark, missing or extra letter, space or `_` wrong. Then
+  it lists the mistakes that happen most often. For example, a row saying
+  *acute accent → none, 16* means the model missed an acute accent 16 times.
+  Click a line name next to it to see that line.
+- Below that are the worst lines, each with its picture, your text, the
+  model's text, and the differences marked.
 
 **If you see `NOTE: N line(s) had OCR == reference exactly`:** some lines may
 never have been corrected (the model's first guess was saved as-is). Such a
@@ -578,23 +591,38 @@ lstmtraining --stop_training \
 
 ```bash
 python3 scripts/cu_eval.py data/real-lines/eval --model cu_v3 --tessdata-dir training \
-  --reocr --report training/cu_v3_report.html --tsv training/cu_v3_metrics.tsv
+  --reocr --report training/cu_v3_report.html --tsv training/cu_v3_metrics.tsv \
+  --compare model/eval/metrics.tsv
 ```
 
 `--reocr` makes sure the new model reads every line again, instead of reusing
-an older model's results.
+an older model's results. `--compare` compares it, line by line, with your
+current model's results from Step 5.
 
-**7d. Compare** its `CER (full)` with the number you wrote down in Step 5.
+**7d. Read the verdict.** Near the top of the output you'll see something like:
 
-- **Lower (better):** make it the main model, then refresh the report:
+```
+  ── compared with model/eval/metrics.tsv ──
+  CER (full)       :   5.75% ->   5.21%   change -0.54 pts (95% CI -0.83 to -0.27)
+  verdict          : BETTER: the improvement is larger than the noise.
+```
+
+- **BETTER:** make it the main model, then refresh the report:
   ```bash
   cp training/cu_v3.traineddata model/cu.traineddata
   make eval
   ```
-- **Not lower:** keep the model you have. Ideas for next time: correct more lines
-  for the books that score worst, check `training/cu_v3_report.html` for a
-  repeated mistake and look it up in [Troubleshooting](troubleshooting.md), or
-  try a different number of iterations.
+- **NO CLEAR DIFFERENCE:** the new model's score moved, but by less than chance
+  alone could move it. Keep the model you have, unless you had another reason
+  for the new one, such as new characters it can read.
+- **WORSE:** keep the model you have.
+
+If you kept the old model, some ideas for next time:
+
+- Correct more lines for the books that score worst.
+- Look in `training/cu_v3_report.html` for a mistake that keeps coming back,
+  and look it up in [Troubleshooting](troubleshooting.md).
+- Try a different number of iterations.
 
 **Optional: try an earlier checkpoint.** A fine-tune doesn't always end on its
 best moment. The run also saves numbered checkpoints:

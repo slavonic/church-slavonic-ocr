@@ -118,12 +118,54 @@ python3 scripts/cu_eval.py data/real-lines/eval --model cu --tessdata-dir model 
 A line goes in the first bucket it matches; the rest are "other".
 `--split ''` turns the breakdown off.
 
+### Confidence intervals and comparing models
+
+The test set is a few hundred lines, so a score carries real sampling noise.
+
+- **Interval on each score.** `CER (full)` and `CER (no marks)` print a 95%
+  bootstrap interval. It resamples whole *lines* with replacement
+  (`--bootstrap N` resamples, default 2000, fixed seed; `0` turns it off).
+  Lines, not characters, are the unit, because errors cluster within lines:
+  one bad crop yields many errors.
+- **Comparing two models: `--compare OLD_TSV`.** This takes the `--tsv` file
+  from an earlier run and runs a *paired* bootstrap over the lines both runs
+  share. Each resample draws the same lines for both models, so the shared
+  difficulty of the test set cancels out. That makes it much tighter than
+  comparing the two separate intervals.
+  - It prints the change in points with its 95% interval.
+  - The verdict is **BETTER** if the whole interval is below 0, **WORSE** if
+    the whole interval is above 0, and **NO CLEAR DIFFERENCE** otherwise.
+  - If the two runs scored different line sets, only the shared lines are
+    compared, and it says so.
+- `metrics.tsv` has a `char_edits` column for this. Older TSVs without it
+  still work: the edits are rebuilt from `cer_full` × `ref_chars`.
+
+```bash
+python3 scripts/cu_eval.py data/real-lines/eval --model cu_v3 --tessdata-dir training \
+  --reocr --tsv training/cu_v3_metrics.tsv --compare model/eval/metrics.tsv
+```
+
 ### Report files
 
-- `--report report.html`: a self-contained page with the worst lines (`--top`,
-  default 60), each with its crop, reference, OCR and a character diff. Read it
-  to spot repeated swaps.
-- `--tsv metrics.tsv`: one row per line, worst first.
+- `--report report.html`: a self-contained page. It opens with an **error
+  breakdown** over all lines, then shows the worst lines (`--top`, default 60),
+  each with its crop, reference, OCR and a character diff.
+  - Errors are counted per *glyph unit*, meaning a base letter plus its
+    combining marks (NFD), aligned by edit distance. A wrong accent is one
+    error, not a deleted and an inserted character.
+  - Each error is classed as wrong letter, right letter with wrong marks,
+    missing or extra letter, or a space or `_` error.
+  - Tables list the most frequent mark confusions (by Unicode mark name), the
+    letters that most often get wrong marks, and the most frequent letter,
+    space and divider pairs. Each row gives up to three example lines, linked
+    when the line is shown further down.
+  - It also counts lines where one letter carries the same mark twice. The
+    model does this; correct text never does. The page names any *reference*
+    line with a repeated mark, since that is a typo.
+
+  The terminal summary prints the counts by kind and the repeated-mark count.
+- `--tsv metrics.tsv`: one row per line, worst first. The last column,
+  `char_edits`, is the line's edit count, which `--compare` reads.
 
 ### Caveats
 
