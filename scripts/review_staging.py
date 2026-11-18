@@ -10,6 +10,10 @@ together, atomically -- into data/real-lines/eval or data/real-lines/finetune
 (see docs/evaluation.md), so the two files can never end up separated or
 copied into the wrong place by a manual `cp`/`mv` typo.
 
+Every .gt.txt this tool writes (Save, -> eval, -> finetune) is normalized to
+Unicode NFC first, so text typed or pasted in decomposed form (e.g. і + U+0308
+instead of ї) never reaches the training or eval data.
+
 No third-party deps: stdlib http.server only. Binds to localhost.
 
 Usage:
@@ -21,6 +25,7 @@ import argparse
 import json
 import shutil
 import sys
+import unicodedata
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -140,6 +145,12 @@ loadNext();
 """
 
 
+def nfc(text: str) -> str:
+    """Ground truth is always stored as NFC (composed), like the rest of the
+    corpus; mixing in NFD would make identical letters score as errors."""
+    return unicodedata.normalize("NFC", text)
+
+
 def make_handler(directory: Path, font_path: Path = None, dests: dict = None):
     dests = dests or {}
     # Stems saved-as-is this session: skipped so /api/next actually advances
@@ -233,7 +244,7 @@ def make_handler(directory: Path, font_path: Path = None, dests: dict = None):
                 self._json({"ok": False, "error": "bad stem"}, status=400)
                 return
             if path == "/api/save":
-                (directory / f"{stem}.gt.txt").write_text(body.get("text", ""), encoding="utf-8")
+                (directory / f"{stem}.gt.txt").write_text(nfc(body.get("text", "")), encoding="utf-8")
                 reviewed.add(stem)
                 self._json({"ok": True})
             elif path == "/api/delete":
@@ -257,7 +268,7 @@ def make_handler(directory: Path, font_path: Path = None, dests: dict = None):
                                  "error": f"{stem} already exists in {dest_name}/ -- resolve by hand"},
                                 status=409)
                     return
-                src_gt.write_text(body.get("text", ""), encoding="utf-8")  # save edits first
+                src_gt.write_text(nfc(body.get("text", "")), encoding="utf-8")  # save edits first
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src_png), str(dst_png))
                 try:

@@ -24,6 +24,7 @@ Usage:
 import argparse
 import json
 import sys
+import unicodedata
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -222,7 +223,8 @@ def make_handler(root, items, font_path):
             base = resolve(body.get("key", ""))
             if base is None:
                 return self._json({"ok": False, "error": "bad key"}, 400)
-            (base.parent / f"{base.name}.gt.txt").write_text(body.get("text", ""), encoding="utf-8")
+            (base.parent / f"{base.name}.gt.txt").write_text(
+                unicodedata.normalize("NFC", body.get("text", "")), encoding="utf-8")  # GT is always NFC
             self._json({"ok": True})
 
     return Handler
